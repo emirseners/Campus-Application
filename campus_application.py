@@ -372,7 +372,7 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
             if var_value > 0:
                 tech_type, v, t, t_ = key
                 tech = node.FindAncestorFromDiff(t, t_).techNodeList[node.FindAncestorFromDiff(t, t_).tech_types.index(tech_type)]
-                salvage_value_per_unit = -node.probability * tech.salvage_value[v] * (tech.depreciation_rate[v] * tech.lifetime[v] - (tech.depreciation_rate[v] * (t_ - t))) * (discount_factor ** t_)
+                salvage_value_per_unit = node.probability * tech.salvage_value[v] * (tech.depreciation_rate[v] * tech.lifetime[v] - (tech.depreciation_rate[v] * (t_ - t))) * (discount_factor ** t_)
                 sale_result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': tech_type, 'Version': v, 't': t, 't_': t_, 'VariableValue': var_value, 'CostPerUnit': salvage_value_per_unit, 'TotalCost': var_value * salvage_value_per_unit}
                 purchase_sale_results.append(sale_result)
 
@@ -566,7 +566,7 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
 
 num_Stages_list = [3]
 num_Subperiods_list = [5]
-num_Subterms_list = [8760]
+num_Subterms_list = [200]
 num_Multipliers_list = [2]
 
 results = {}
