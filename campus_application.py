@@ -4,6 +4,7 @@ import time
 import pandas as pd
 import math
 from functools import reduce
+import os
 
 class ScenarioTree:
     def __init__(self, technologyTrees):
@@ -93,12 +94,6 @@ class ScenarioNode:
         if self.parent is not None:
             prt= str("(")+str(self.parent.id)+str(")")
             print(str_ + str(self.id) + str(prt) + ";" + str(round(self.probability,5)) + "; " + techNodeIDs)
-
-    def FindAncestor(self, t):
-        ancestor = self
-        while t not in ancestor.stageSubperiods:
-            ancestor = ancestor.parent
-        return ancestor
 
     def AddVariables(self, model):
         self.v_Plus = {}
@@ -221,7 +216,7 @@ class TechnologyTree: # preroot'ta techamounta self.initialTechAmount koydum, 0 
         self.root = TechnologyNode(1, self.preroot, 1, self, self.versions, self.initialCost, self.initialEfficiency, self.initialEmission, self.periodic_electricity_production, self.lifetime, self.degradation_rate, self.initialOMcost, self.OMcostchangebyage, self.depreciation_rate, self.initial_salvage_value, self.OMcostchangebyyear) #root is the inital decision making node.
 
     def ConstructByMultipliers(self, numStages, probabilities, costMultiplier, efficiencyMultiplier, emissionMultiplier):
-        leaves = [self.root] # root is stage 1
+        leaves = [self.root]
         numBranches = len(probabilities)
         for n in range(1,numStages):
             nextLeaves = []
@@ -292,7 +287,7 @@ class TechnologyNode:
         print(self.salvage_value)
         print()
 
-    def Print_(self):                     #This function will error when it is called since versions are added
+    def Print_(self):
         str_ = ""
         for s in range(self.stage-1):
             str_ = str_ + "\t"
@@ -317,68 +312,51 @@ def Output(m):
                 print(str(v.varName) + " = " + str(v.x))    
         print('Optimal objective value: ' + str(m.objVal) + "\n")
 
-def OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers):
+def OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers, results_directory, grid_electricity_cost):
     results = []
     purchase_sale_results = []
-    for node in scenarioTree.nodes:
-        for key, var in node.v_Active.items():
-            var_value = var.X
-            if var_value > 0:
-                tech_type, v, t, t_, p = key
-                tech = node.FindAncestorFromDiff(t, t_).techNodeList[node.FindAncestorFromDiff(t, t_).tech_types.index(tech_type)]
-                periodic_electricity = tech.periodic_electricity[v][p-1] * (1 - (tech.degradation_rate[v] * (t_ - t)))
-                #periodic_thermal = tech.periodic_thermal[v][p-1] * (1 - (tech.degradation_rate[v] * (t_ - t)))
-                total_electricity = var_value * periodic_electricity
-                #total_thermal = var_value * periodic_thermal
-                om_cost_per_unit = node.probability * tech.OMcost[v] * (tech.OMcostchangebyage[v] ** (t_ - t)) * (tech.OMcostchangebyyear[v] ** t) * (discount_factor ** t_)
-                result = {
-                    'NodeID': node.id,
-                    'VariableName': var.VarName,
-                    'TechType': tech_type,
-                    'Version': v,
-                    't': t,
-                    't_': t_,
-                    'p': p,
-                    'VariableValue': var_value,
-                    'PeriodicElectricityProductionPerUnit': periodic_electricity,
-                    # 'PeriodicThermalProductionPerUnit': periodic_thermal,
-                    'TotalElectricityProduction': total_electricity,
-                    # 'TotalThermalProduction': total_thermal,
-                    'OMCostPerUnit': om_cost_per_unit,
-                    'OMCost': var_value * om_cost_per_unit
-                }
-                results.append(result)
+    grid_inventory_results = []
+    node_om_costs = {}
 
+    for node in scenarioTree.nodes:
+        node_om_cost = 0
         for key, var in node.v_Existing.items():
             var_value = var.X
             if var_value > 0:
                 tech_type, v, t, t_ = key
                 tech = node.FindAncestorFromDiff(t, t_).techNodeList[node.FindAncestorFromDiff(t, t_).tech_types.index(tech_type)]
 
-                for p in node.stageSubterms:
-                    if tech_type in ['solar', 'wind']:
+                if tech.tree.segment == 'Production':
+                    for p in node.stageSubterms:
                         periodic_electricity = tech.periodic_electricity[v][p-1] * (1 - (tech.degradation_rate[v] * (t_ - t)))
-                        total_electricity = var_value * periodic_electricity
-                    else:
-                        periodic_electricity = 0
-                        total_electricity = 0
 
-                    om_cost_per_unit = node.probability * tech.OMcost[v] * (1 / tech.tree.numSubterms) * (tech.OMcostchangebyage[v] ** (t_ - t)) * (tech.OMcostchangebyyear[v] ** t) * (discount_factor ** t_)
-                    result = {
-                        'NodeID': node.id,
-                        'VariableName': var.VarName,
-                        'TechType': tech_type,
-                        'Version': v,
-                        't': t,
-                        't_': t_,
-                        'p': p,
-                        'VariableValue': var_value,
-                        'PeriodicElectricityProductionPerUnit': periodic_electricity,
-                        'TotalElectricityProduction': total_electricity,
-                        'OMCostPerUnit': om_cost_per_unit,
-                        'OMCost': var_value * om_cost_per_unit
-                    }
-                    results.append(result)
+                        result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': tech_type, 'Version': v, 't': t, 't_': t_, 'p': p, 'VariableValue': var_value, 'PeriodicElectricityProductionPerUnit': periodic_electricity, 'TotalElectricityProduction': var_value * periodic_electricity}
+                        results.append(result)
+
+                    om_cost = var_value * node.probability * tech.OMcost[v] * (tech.OMcostchangebyage[v] ** (t_ - t)) * (tech.OMcostchangebyyear[v] ** t) * (discount_factor ** t_)
+                    node_om_cost += om_cost
+
+        for key, var in node.g_Purchase.items():
+            var_value = var.X
+            t, p = key
+            if var_value > 0:
+                purchase_result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': 'grid', 'Version': '', 't': t, 't_': t, 'p': p, 'VariableValue': var_value, 'PeriodicElectricityProductionPerUnit': 0, 'TotalElectricityProduction': var_value}
+                results.append(purchase_result)
+
+            grid_inventory_entry = {'NodeID': node.id, 't': t, 'p': p, 'g_Purchase': var_value}
+            grid_inventory_results.append(grid_inventory_entry)
+
+        for key, var in node.i_Carrying.items():
+            var_value = var.X
+            t, p = key
+            existing_entry = next((entry for entry in grid_inventory_results if entry['NodeID'] == node.id and entry['t'] == t and entry['p'] == p), None)
+            if existing_entry:
+                existing_entry['i_Carrying'] = var_value
+            else:
+                grid_inventory_entry = {'NodeID': node.id, 't': t, 'p': p, 'i_Carrying': var_value}
+                grid_inventory_results.append(grid_inventory_entry)
+
+        node_om_costs[node.id] = node_om_cost
 
         for key, var in node.v_Plus.items():
             var_value = var.X
@@ -386,16 +364,7 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
                 tech_type, v, t_ = key
                 tech = node.techNodeList[node.tech_types.index(tech_type)]
                 purchase_cost_per_unit = node.probability * tech.cost[v] * (discount_factor ** t_)
-                purchase_result = {
-                    'NodeID': node.id,
-                    'VariableName': var.VarName,
-                    'TechType': tech_type,
-                    'Version': v,
-                    't_': t_,
-                    'VariableValue': var_value,
-                    'CostPerUnit': purchase_cost_per_unit,
-                    'TotalCost': var_value * purchase_cost_per_unit
-                }
+                purchase_result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': tech_type, 'Version': v, 't_': t_, 'VariableValue': var_value, 'CostPerUnit': purchase_cost_per_unit, 'TotalCost': var_value * purchase_cost_per_unit}
                 purchase_sale_results.append(purchase_result)
 
         for key, var in node.v_Minus.items():
@@ -404,88 +373,145 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
                 tech_type, v, t, t_ = key
                 tech = node.FindAncestorFromDiff(t, t_).techNodeList[node.FindAncestorFromDiff(t, t_).tech_types.index(tech_type)]
                 salvage_value_per_unit = -node.probability * tech.salvage_value[v] * (tech.depreciation_rate[v] * tech.lifetime[v] - (tech.depreciation_rate[v] * (t_ - t))) * (discount_factor ** t_)
-                sale_result = {
-                    'NodeID': node.id,
-                    'VariableName': var.VarName,
-                    'TechType': tech_type,
-                    'Version': v,
-                    't': t,
-                    't_': t_,
-                    'VariableValue': var_value,
-                    'CostPerUnit': salvage_value_per_unit,
-                    'TotalCost': var_value * salvage_value_per_unit
-                }
+                sale_result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': tech_type, 'Version': v, 't': t, 't_': t_, 'VariableValue': var_value, 'CostPerUnit': salvage_value_per_unit, 'TotalCost': var_value * salvage_value_per_unit}
                 purchase_sale_results.append(sale_result)
 
     df_results = pd.DataFrame(results)
+    df_results.drop(columns=[col for col in ['OMCostPerUnit', 'OMCost'] if col in df_results.columns], inplace=True)
     df_purchase_sale = pd.DataFrame(purchase_sale_results)
-    total_production_by_tech = df_results.groupby(['NodeID', 't_', 'TechType']).agg({'TotalElectricityProduction': 'sum', 'OMCost': 'sum'}).reset_index()
+    df_grid_inventory = pd.DataFrame(grid_inventory_results)
+    if 'g_Purchase' not in df_grid_inventory.columns:
+        df_grid_inventory['g_Purchase'] = 0
+    if 'i_Carrying' not in df_grid_inventory.columns:
+        df_grid_inventory['i_Carrying'] = 0
+
+    df_grid_inventory.to_csv(os.path.join(results_directory, f'GridAndInventory_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
+    total_production_by_tech = df_results.groupby(['NodeID', 't_', 'TechType']).agg({'TotalElectricityProduction': 'sum'}).reset_index()
+
     summary_data = []
+    inventory_sums = df_grid_inventory.groupby(['NodeID', 't']).agg({'i_Carrying': 'sum'}).reset_index()
+    inventory_sums.rename(columns={'i_Carrying': 'TotalInventoryCarrying', 't': 't_'}, inplace=True)
+
     node_t_combinations = total_production_by_tech[['NodeID', 't_']].drop_duplicates()
 
     for _, row in node_t_combinations.iterrows():
-        summary_entry = {'NodeID': row['NodeID'], 't_': row['t_']}
-        total_electricity_demand = sum(demand['electricity'][row['t_']])
-        production_data = total_production_by_tech[(total_production_by_tech['NodeID'] == row['NodeID']) & (total_production_by_tech['t_'] == row['t_'])]
+        node_id = row['NodeID']
+        t_ = row['t_']
 
-        for tech_type in ['solar', 'wind', 'natural_gas', 'battery']:
+        summary_entry = {'NodeID': node_id, 't_': t_}
+        total_electricity_demand = sum(demand[t_])
+        production_data = total_production_by_tech[(total_production_by_tech['NodeID'] == node_id) & (total_production_by_tech['t_'] == t_)]
+
+        for tech_type in ['solar', 'wind', 'grid']:
             tech_data = production_data[production_data['TechType'] == tech_type]
             total_electricity_production = tech_data['TotalElectricityProduction'].sum() if not tech_data.empty else 0
-            total_om_cost = tech_data['OMCost'].sum() if not tech_data.empty else 0
-            electricity_percentage = (total_electricity_production / total_electricity_demand * 100) if total_electricity_demand > 0 else 0
-            summary_entry[f'{tech_type}_ElectricityPercentage'] = electricity_percentage
-            summary_entry[f'{tech_type}_OMCost'] = total_om_cost
 
-        total_om_cost = production_data['OMCost'].sum() if not production_data.empty else 0
-        summary_entry['Total_OMCost'] = total_om_cost
-        purchase_data = df_purchase_sale[(df_purchase_sale['NodeID'] == row['NodeID']) & (df_purchase_sale['t_'] == row['t_'])]
+            summary_entry[f'{tech_type}_TotalElectricityProduction'] = total_electricity_production
+            summary_entry[f'{tech_type}_ElectricityPercentage'] = (total_electricity_production / total_electricity_demand * 100) if total_electricity_demand > 0 else 0
+
+        purchase_data = df_purchase_sale[(df_purchase_sale['NodeID'] == node_id) & (df_purchase_sale['t_'] == t_)]
+
         total_purchase_cost = purchase_data[purchase_data['TotalCost'] > 0]['TotalCost'].sum() if not purchase_data.empty else 0
         summary_entry['Total_PurchaseCost'] = total_purchase_cost
         total_salvage_value = -purchase_data[purchase_data['TotalCost'] < 0]['TotalCost'].sum() if not purchase_data.empty else 0
         summary_entry['Total_SalvageValue'] = total_salvage_value
+
+        inventory_row = inventory_sums[(inventory_sums['NodeID'] == node_id) & (inventory_sums['t_'] == t_)]
+        if not inventory_row.empty:
+            total_inventory_carrying = inventory_row['TotalInventoryCarrying'].values[0]
+        else:
+            total_inventory_carrying = 0
+        summary_entry['TotalInventoryCarrying'] = total_inventory_carrying
+
         summary_data.append(summary_entry)
 
     df_summary = pd.DataFrame(summary_data)
+
     purchase_data = df_purchase_sale[df_purchase_sale['TotalCost'] > 0]
     sale_data = df_purchase_sale[df_purchase_sale['TotalCost'] < 0]
-    purchase_summary = purchase_data[purchase_data['TechType'].isin(['solar', 'wind', 'battery'])].groupby(['NodeID', 'TechType', 'Version']).agg({'VariableValue': 'sum', 'TotalCost': 'sum'}).reset_index()
+
+    purchase_summary = purchase_data[purchase_data['TechType'].isin(['solar', 'wind', 'battery'])].groupby(['NodeID', 'TechType', 'Version']).agg({'VariableValue': 'sum','TotalCost': 'sum'}).reset_index()
     purchase_summary.rename(columns={'VariableValue': 'PurchasedQuantity', 'TotalCost': 'PurchaseCost'}, inplace=True)
 
     sale_summary = sale_data[sale_data['TechType'].isin(['solar', 'wind', 'battery'])].groupby(['NodeID', 'TechType', 'Version']).agg({'VariableValue': 'sum', 'TotalCost': 'sum'}).reset_index()
     sale_summary['SalvageValue'] = -sale_summary['TotalCost']
     sale_summary.rename(columns={'VariableValue': 'SoldQuantity'}, inplace=True)
     sale_summary = sale_summary[['NodeID', 'TechType', 'Version', 'SoldQuantity', 'SalvageValue']]
+
     purchase_sale_summary = pd.merge(purchase_summary, sale_summary, on=['NodeID', 'TechType', 'Version'], how='outer')
     purchase_sale_summary.fillna(0, inplace=True)
+
+    df_g_purchase = df_grid_inventory[['NodeID', 't', 'p', 'g_Purchase']]
+    df_g_purchase = df_g_purchase[df_g_purchase['g_Purchase'] > 0]
+
+    if not df_g_purchase.empty:
+        df_g_purchase['t_'] = df_g_purchase['t']
+        df_g_purchase['VariableName'] = 'g_Purchase'
+        df_g_purchase['TechType'] = 'grid'
+        df_g_purchase['Version'] = ''
+        df_g_purchase['VariableValue'] = df_g_purchase['g_Purchase']
+        df_g_purchase['CostPerUnit'] = df_g_purchase['t'].apply(lambda t: grid_electricity_cost[t] * (discount_factor ** t))
+        df_g_purchase['TotalCost'] = df_g_purchase['VariableValue'] * df_g_purchase['CostPerUnit']
+        df_g_purchase_yearly_summed = df_g_purchase.groupby('t_').agg({'NodeID': 'first', 'VariableName': 'first', 'TechType': 'first', 'Version': 'first', 'VariableValue': 'sum', 'CostPerUnit': 'first', 'TotalCost': 'sum'}).reset_index()
+
+        df_g_purchase_yearly_summed['TotalCost'] = df_g_purchase_yearly_summed['VariableValue'] * df_g_purchase_yearly_summed['CostPerUnit']
+        df_grid_purchase = df_g_purchase[['NodeID', 'VariableName', 'TechType', 'Version', 't_', 'VariableValue', 'CostPerUnit', 'TotalCost']].copy()
+        df_purchase_sale = pd.concat([df_purchase_sale, df_g_purchase_yearly_summed], ignore_index=True)
+
+    df_purchase_sale.sort_values(by=['NodeID', 't_'], ascending=[True, True], inplace=True)
+    grid_purchase_node_summary = df_grid_purchase.groupby('NodeID').agg({'VariableValue': 'sum', 'TotalCost': 'sum'}).reset_index()
+    grid_purchase_node_summary.rename(columns={'VariableValue': 'Grid_PurchasedQuantity', 'TotalCost': 'Grid_PurchaseCost'}, inplace=True)
+
     purchase_sale_summary['Tech_Version'] = purchase_sale_summary['TechType'] + '_V' + purchase_sale_summary['Version'].astype(str)
-    purchase = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='PurchasedQuantity').fillna(0)
-    purchase.columns = ['Purchased_' + col for col in purchase.columns]
+
+    purchase_pivot = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='PurchasedQuantity').fillna(0)
+    purchase_pivot.columns = ['Purchased_' + col for col in purchase_pivot.columns]
     purchase_cost_pivot = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='PurchaseCost').fillna(0)
     purchase_cost_pivot.columns = ['PurchaseCost_' + col for col in purchase_cost_pivot.columns]
-    sales = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='SoldQuantity').fillna(0)
-    sales.columns = ['Sold_' + col for col in sales.columns]
-    salvage_value = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='SalvageValue').fillna(0)
-    salvage_value.columns = ['SalvageValue_' + col for col in salvage_value.columns]
+    sold_pivot = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='SoldQuantity').fillna(0)
+    sold_pivot.columns = ['Sold_' + col for col in sold_pivot.columns]
+    salvage_value_pivot = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='SalvageValue').fillna(0)
+    salvage_value_pivot.columns = ['SalvageValue_' + col for col in salvage_value_pivot.columns]
 
-    dfs = [purchase, purchase_cost_pivot, sales, salvage_value]
-    purchase_sale = reduce(lambda left, right: pd.merge(left, right, on='NodeID', how='outer'), dfs)
-    purchase_sale.fillna(0, inplace=True)
-    total_node_costs = df_summary.groupby('NodeID').agg({'Total_OMCost': 'sum', 'Total_PurchaseCost': 'sum', 'Total_SalvageValue': 'sum'}).reset_index()
-    total_node_costs['Total_NodeCost'] = total_node_costs['Total_OMCost'] + total_node_costs['Total_PurchaseCost'] - total_node_costs['Total_SalvageValue']
-    purchase_sale = pd.merge(purchase_sale, total_node_costs, on='NodeID', how='left')
+    dfs = [purchase_pivot, purchase_cost_pivot, sold_pivot, salvage_value_pivot]
+    purchase_sale_pivot = reduce(lambda left, right: pd.merge(left, right, on='NodeID', how='outer'), dfs)
+    purchase_sale_pivot.fillna(0, inplace=True)
 
-    #with pd.ExcelWriter(f'Results.xlsx_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}') as writer:
-    #    df_results.to_excel(writer, sheet_name='ProductionResults', index=False)
-    #    total_production_by_tech.to_excel(writer, sheet_name='TotalProductionByTechType', index=False)
-    #    df_purchase_sale.to_excel(writer, sheet_name='PurchaseAndSales', index=False)
-    #    df_summary.to_excel(writer, sheet_name='Summary', index=False)
-    #    purchase_sale.to_excel(writer, sheet_name='PurchaseSaleSummary', index=False)
+    purchase_sale_pivot = purchase_sale_pivot.loc[:, (purchase_sale_pivot != 0).any(axis=0)]
 
-    df_results.to_csv(f'ProductionResults_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv', index=False)
-    total_production_by_tech.to_csv(f'TotalProductionByTechType_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv', index=False)
-    df_purchase_sale.to_csv(f'PurchaseAndSales_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv', index=False)
-    df_summary.to_csv(f'Summary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv', index=False)
-    purchase_sale.to_csv(f'PurchaseSaleSummary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv', index=False)
+    total_node_costs = df_summary.groupby('NodeID').agg({'Total_PurchaseCost': 'sum', 'Total_SalvageValue': 'sum'}).reset_index()
+
+    om_costs_df = pd.DataFrame(list(node_om_costs.items()), columns=['NodeID', 'Total_OMCost'])
+    total_node_costs = pd.merge(total_node_costs, om_costs_df, on='NodeID', how='left')
+    total_node_costs['Total_NodeCost'] = total_node_costs['Total_PurchaseCost'] - total_node_costs['Total_SalvageValue'] + total_node_costs['Total_OMCost']
+
+    purchase_sale_pivot = pd.merge(purchase_sale_pivot, total_node_costs, on='NodeID', how='left')
+
+    purchase_sale_pivot = pd.merge(purchase_sale_pivot, grid_purchase_node_summary, on='NodeID', how='left')
+    purchase_sale_pivot[['Grid_PurchasedQuantity', 'Grid_PurchaseCost']] = purchase_sale_pivot[['Grid_PurchasedQuantity', 'Grid_PurchaseCost']].fillna(0)
+
+    cols = purchase_sale_pivot.columns.tolist()
+    if 'Total_PurchaseCost' in cols:
+        idx = cols.index('Total_PurchaseCost')
+    else:
+        idx = len(cols)
+
+    for col in ['Grid_PurchasedQuantity', 'Grid_PurchaseCost']:
+        if col in cols:
+            cols.remove(col)
+
+    cols = cols[:idx] + ['Grid_PurchasedQuantity', 'Grid_PurchaseCost'] + cols[idx:]
+    purchase_sale_pivot = purchase_sale_pivot[cols]
+
+    purchase_sale_pivot['Total_NodeCost'] += purchase_sale_pivot['Grid_PurchaseCost']
+
+    df_results.to_csv(os.path.join(results_directory, f'ProductionResults_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
+    df_purchase_sale.to_csv(os.path.join(results_directory, f'PurchaseAndSales_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
+    df_summary.to_csv(os.path.join(results_directory, f'Summary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
+    purchase_sale_pivot.to_csv(os.path.join(results_directory, f'PurchaseSaleSummary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
+
+
+
 
 def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubperiods, numMultipliers, numSubterms, initial_tech, budget, grid_electricity_cost, discount_factor = 0.99):
     model = Model('MachineReplacement')
@@ -503,21 +529,25 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
         node.AddBatteryCapacityConstraints(model)
         node.AddUpperBoundsForIP(model, demand)
 
+    results_directory = f'Results_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}'
+    if not os.path.exists(results_directory):
+        os.makedirs(results_directory)
+
     model.setParam('MIPGap', 0.01)
     model.setParam('TimeLimit', 86400)
-    #model.setParam('LogFile', f'Gurobi_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.txt')
+    model.setParam('LogFile', os.path.join(results_directory, 'GurobiLog.txt'))
 
     start_time = time.time()
     model.optimize()
     end_time = time.time()
     optimization_time = end_time - start_time
 
-    lp_filename = f'MachineReplacement_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.lp'
-    sol_filename = f'MachineReplacement_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.sol'
+    lp_filename = os.path.join(results_directory, 'MachineReplacement.lp')
+    sol_filename = os.path.join(results_directory, 'MachineReplacement.sol')
     #model.write(lp_filename)
     #model.write(sol_filename)
 
-    #OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers)
+    OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers, results_directory, grid_electricity_cost)
     Output(model)
 
     model_results = {
@@ -534,9 +564,9 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
 
     return model_results
 
-num_Stages_list = [2]
-num_Subperiods_list = [2]
-num_Subterms_list = [2000]
+num_Stages_list = [3]
+num_Subperiods_list = [5]
+num_Subterms_list = [8760]
 num_Multipliers_list = [2]
 
 results = {}
