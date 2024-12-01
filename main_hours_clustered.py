@@ -97,10 +97,10 @@ class ScenarioNode:
 
     def AddVariables(self, model):
         self.v_Plus = {}
-        self.v_Plus.update(model.addVars([(tech.tree.type, v, t)  for tech in self.productiontechNodeList for v in range(tech.NumVersion) for t in self.stageSubperiods], vtype=GRB.INTEGER, name="plus_"+str(self.id))) # purchase
+        self.v_Plus.update(model.addVars([(tech.tree.type, v, t)  for tech in self.productiontechNodeList for v in range(tech.NumVersion) for t in self.stageSubperiods], vtype=GRB.CONTINUOUS, name="plus_"+str(self.id))) # purchase
         self.v_Plus.update(model.addVars([(tech.tree.type, v, t)  for tech in self.storagetechNodeList for v in range(tech.NumVersion) for t in self.stageSubperiods], vtype=GRB.CONTINUOUS, name="plus_"+str(self.id))) # purchase
         self.v_Minus = {}
-        self.v_Minus.update(model.addVars([(tech.tree.type, v, t, t_)  for tech in self.productiontechNodeList for v in range(tech.NumVersion) for t in self.allSubperiods for t_ in self.stageSubperiods if t <= t_ < t + tech.lifetime[v]], vtype=GRB.INTEGER, name="minus_"+str(self.id))) # retired
+        self.v_Minus.update(model.addVars([(tech.tree.type, v, t, t_)  for tech in self.productiontechNodeList for v in range(tech.NumVersion) for t in self.allSubperiods for t_ in self.stageSubperiods if t <= t_ < t + tech.lifetime[v]], vtype=GRB.CONTINUOUS, name="minus_"+str(self.id))) # retired
         self.v_Minus.update(model.addVars([(tech.tree.type, v, t, t_)  for tech in self.storagetechNodeList for v in range(tech.NumVersion) for t in self.allSubperiods for t_ in self.stageSubperiods if t <= t_ < t + tech.lifetime[v]], vtype=GRB.CONTINUOUS, name="minus_"+str(self.id))) # retired
         self.v_Existing = model.addVars([(tech.tree.type, v, t, t_) for tech in self.techNodeList for v in range(tech.NumVersion) for t in self.allSubperiods for t_ in self.stageSubperiods if t <= t_ < t + tech.lifetime[v]], vtype=GRB.CONTINUOUS, name="exist_"+str(self.id)) # exist
         self.g_Purchase = model.addVars([(t, p) for t in self.stageSubperiods for p in self.stageSubterms], vtype=GRB.CONTINUOUS, name="grid_purchase_"+str(self.id)) # grid purchase amount
@@ -511,8 +511,6 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
     purchase_sale_pivot.to_csv(os.path.join(results_directory, f'PurchaseSaleSummary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
 
 
-
-
 def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubperiods, numMultipliers, numSubterms, initial_tech, budget, grid_electricity_cost, discount_factor = 0.99):
     model = Model('MachineReplacement')
     model.setParam('OutputFlag', True)
@@ -527,7 +525,7 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
         node.SetMinustoZeroConstraints(model)
         node.AddBalanceConstraints(model)
         node.AddBatteryCapacityConstraints(model)
-        node.AddUpperBoundsForIP(model, demand)
+        #node.AddUpperBoundsForIP(model, demand)
 
     results_directory = f'Results_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}'
     if not os.path.exists(results_directory):
@@ -564,9 +562,25 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
 
     return model_results
 
+def sum_hourly_data(values):
+    total_days = len(values) // 24
+    sums = []
+    for i in range(total_days):
+        for j in range(12):
+            sums.append(sum(values[i * 24 + j * 2:i * 24 + j * 2 + 2]))
+    return sums
+
+demand_excel = pd.read_excel('demands.xlsx')
+demand_data = demand_excel['Demands'].tolist()
+electricity_demand = sum_hourly_data(demand_data)
+thermal_demand = [0 for _ in range(len(electricity_demand))]
+electricity_demand = pd.read_excel('Demands.xlsx', sheet_name='Electricity Demand')['Demands'].tolist()[:8760]
+electricity_demand = sum_hourly_data(electricity_demand)
+electricity_demand = [electricity_demand for i in range(3*5+1)]
+
 num_Stages_list = [3]
 num_Subperiods_list = [5]
-num_Subterms_list = [200]
+num_Subterms_list = [len(electricity_demand[0])]
 num_Multipliers_list = [2]
 
 results = {}
@@ -579,16 +593,15 @@ for numStages in num_Stages_list:
             emission_limits = [None for _ in range(numStages*numSubperiods)] + [0]
             budget = [None for _ in range(numStages*numSubperiods+1)]
 
-            electricity_demand = [pd.read_excel('Demands.xlsx', sheet_name='Electricity Demand')['Demands'].tolist()[:numSubterms]]*(numStages*numSubperiods + 1)
-
             for numMultipliers in num_Multipliers_list:
                 solar_initial = pd.read_excel('Solar Power.xlsx', sheet_name='Initial values')
                 solar_advancements = pd.read_excel('Solar Power.xlsx', sheet_name=f'Advancements{numMultipliers}')
                 solar_hourly_production = pd.read_excel('productiondata.xlsx', sheet_name='solar')
                 solar_hourly_production_list = solar_hourly_production.T.values.tolist()
-                solar_hourly_production_list = [sublist[:numSubterms] for sublist in solar_hourly_production_list]
+                solar_hourly_production_list = [sublist[:8760] for sublist in solar_hourly_production_list]
                 solar_hourly_production_list = solar_hourly_production_list[:2] + solar_hourly_production_list[4:]
                 solar_hourly_production_list = [[max(0, x) for x in sublist] for sublist in solar_hourly_production_list]
+                solar_hourly_production_list = [sum_hourly_data(sublist) for sublist in solar_hourly_production_list]
 
                 solar = TechnologyTree("solar", numSubperiods, numSubterms, 
                     lifetime=[solar_initial.iloc[4, i] for i in range(1, solar_initial.shape[1])], 
@@ -610,7 +623,8 @@ for numStages in num_Stages_list:
                 wind_advancements = pd.read_excel('Wind Power.xlsx', sheet_name=f'Advancements{1}')
                 wind_hourly_production = pd.read_excel('productiondata.xlsx', sheet_name='wind')
                 wind_hourly_production_list = wind_hourly_production.T.values.tolist()
-                wind_hourly_production_list = [sublist[:numSubterms] for sublist in wind_hourly_production_list]
+                wind_hourly_production_list = [sublist[:8760] for sublist in wind_hourly_production_list]
+                wind_hourly_production_list = [sum_hourly_data(sublist) for sublist in wind_hourly_production_list]
 
                 wind = TechnologyTree("wind", numSubperiods, numSubterms, 
                     lifetime=[wind_initial.iloc[4, i] for i in range(1, wind_initial.shape[1])], 
