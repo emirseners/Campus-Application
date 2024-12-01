@@ -532,6 +532,7 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
         os.makedirs(results_directory)
 
     model.setParam('MIPGap', 0.01)
+    model.setParam('MIPFocus', 1)
     model.setParam('TimeLimit', 86400)
     model.setParam('LogFile', os.path.join(results_directory, 'GurobiLog.txt'))
 
