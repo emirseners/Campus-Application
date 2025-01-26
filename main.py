@@ -213,10 +213,9 @@ class ScenarioNode:
             print("Total emission_"+str(self.id)+ ": " + str(self.emissionExpr.getValue()))
 
 class TechnologyTree: # preroot'ta techamounta self.initialTechAmount koydum, 0 konulursa node_0 constraintinden dolayı infeasible sonuç alınıyor
-    def __init__(self, type, segment, numSubperiods, numSubterms, lifetime, initialCost, initialEfficiency, initialEmission, degradation_rate, initialOMcost, OMcostchangebyage, depreciation_rate, initial_salvage_value, OMcostchangebyyear, spatial_requirement, periodic_electricity_production=None, electricity_storage_capacity=None):
+    def __init__(self, type, segment, numSubperiods, numSubterms, lifetime, initialCost, initialEmission, degradation_rate, initialOMcost, OMcostchangebyage, depreciation_rate, initial_salvage_value, OMcostchangebyyear, spatial_requirement, periodic_electricity_production=None, electricity_storage_capacity=None):
         self.type = type
         self.initialCost = initialCost
-        self.initialEfficiency = initialEfficiency
         self.initialEmission = initialEmission
         self.periodic_electricity_production = periodic_electricity_production
         self.electricity_storage_capacity = electricity_storage_capacity
@@ -233,8 +232,8 @@ class TechnologyTree: # preroot'ta techamounta self.initialTechAmount koydum, 0 
         self.numSubperiods = numSubperiods
         self.numSubterms = numSubterms
         self.versions = len(initialCost)
-        self.preroot = TechnologyNode(0, None, 1, self, self.versions, [0 for _ in range(self.versions)], [0 for _ in range(self.versions)], [0 for _ in range(self.versions)], self.periodic_electricity_production, self.electricity_storage_capacity, self.lifetime, self.degradation_rate, self.initialOMcost, self.OMcostchangebyage, self.depreciation_rate, self.initial_salvage_value, self.OMcostchangebyyear, self.spatial_requirement) # preroot is stage-0: the existing situation
-        self.root = TechnologyNode(1, self.preroot, 1, self, self.versions, self.initialCost, self.initialEfficiency, self.initialEmission, self.periodic_electricity_production, self.electricity_storage_capacity, self.lifetime, self.degradation_rate, self.initialOMcost, self.OMcostchangebyage, self.depreciation_rate, self.initial_salvage_value, self.OMcostchangebyyear, self.spatial_requirement) #root is the inital decision making node.
+        self.preroot = TechnologyNode(0, None, 1, self, self.versions, [0 for _ in range(self.versions)], [0 for _ in range(self.versions)], self.periodic_electricity_production, self.electricity_storage_capacity, self.lifetime, self.degradation_rate, self.initialOMcost, self.OMcostchangebyage, self.depreciation_rate, self.initial_salvage_value, self.OMcostchangebyyear, self.spatial_requirement) # preroot is stage-0: the existing situation
+        self.root = TechnologyNode(1, self.preroot, 1, self, self.versions, self.initialCost, self.initialEmission, self.periodic_electricity_production, self.electricity_storage_capacity, self.lifetime, self.degradation_rate, self.initialOMcost, self.OMcostchangebyage, self.depreciation_rate, self.initial_salvage_value, self.OMcostchangebyyear, self.spatial_requirement) #root is the inital decision making node.
 
     def ConstructByMultipliers(self, numStages, probabilities, costMultiplier, efficiencyMultiplier, emissionMultiplier):
         leaves = [self.root]
@@ -257,7 +256,7 @@ class TechnologyTree: # preroot'ta techamounta self.initialTechAmount koydum, 0 
             node.Print_()
 
 class TechnologyNode:
-    def __init__(self, id_In, parent_In, probability_In, tree_In, versionnum_In, cost_In, efficiency_In, emission_In, periodic_electricity_In, storage_capacity_In, lifetime_In, degradation_In, OMcost_In, OMcostchangebyage_In, depreciation_In, salvage_value_In, OMcostchangebyyear_In, spatial_requirement_In):
+    def __init__(self, id_In, parent_In, probability_In, tree_In, versionnum_In, cost_In, emission_In, periodic_electricity_In, storage_capacity_In, lifetime_In, degradation_In, OMcost_In, OMcostchangebyage_In, depreciation_In, salvage_value_In, OMcostchangebyyear_In, spatial_requirement_In):
         self.id = id_In
         self.parent = parent_In
 
@@ -277,7 +276,6 @@ class TechnologyNode:
         self.NumVersion = versionnum_In
         self.cost = cost_In
         self.lifetime = lifetime_In
-        self.efficiency = efficiency_In
         self.emission = emission_In
         self.periodic_electricity = periodic_electricity_In
         self.storage_capacity = storage_capacity_In
@@ -298,7 +296,6 @@ class TechnologyNode:
         print(self.stage)
         print(self.probability)
         print(self.cost)
-        print(self.efficiency)
         print(self.emission)
         print(self.periodic_electricity)
         print(self.storage_capacity)
@@ -319,10 +316,10 @@ class TechnologyNode:
         prt="()"
         if self.parent is not None:
             prt= str("(")+str(self.parent.id)+str(")")
-            print(str_ + str(self.id) + str(prt) + ";" + str(round(self.probability,5)) + "; " + str(round(self.cost,3)) + " " + str(round(self.efficiency,3)) + " " + str(round(self.emission,3)) + " " + str(round(self.periodic_electricity,3)) + " " + str(round(self.storage_capacity,3)))
+            print(str_ + str(self.id) + str(prt) + ";" + str(round(self.probability,5)) + "; " + str(round(self.cost,3)) + " " + str(round(self.emission,3)) + " " + str(round(self.periodic_electricity,3)) + " " + str(round(self.storage_capacity,3)))
 
     def AddChild(self, prob, costMult, effMult, emisMult):
-        child = TechnologyNode(len(self.tree.nodes), self, prob, self.tree, self.NumVersion, [i*costMult for i in self.cost], [i*effMult for i in self.efficiency], [i*emisMult for i in self.emission], ([[x*effMult for x in i] for i in self.periodic_electricity] if self.periodic_electricity is not None else None), ([i*effMult for i in self.storage_capacity] if self.storage_capacity is not None else None), self.lifetime, self.degradation_rate, self.OMcost, self.OMcostchangebyage, self.depreciation_rate, [i*costMult for i in self.salvage_value], self.OMcostchangebyyear, self.spatial_requirement)
+        child = TechnologyNode(len(self.tree.nodes), self, prob, self.tree, self.NumVersion, [i*costMult for i in self.cost], [i*emisMult for i in self.emission], ([[x*effMult for x in i] for i in self.periodic_electricity] if self.periodic_electricity is not None else None), ([i*effMult for i in self.storage_capacity] if self.storage_capacity is not None else None), self.lifetime, self.degradation_rate, self.OMcost, self.OMcostchangebyage, self.depreciation_rate, [i*costMult for i in self.salvage_value], self.OMcostchangebyyear, self.spatial_requirement)
         self.children.append(child)
 
 def Output(m):
@@ -611,7 +608,8 @@ def clustering_n_consecutive_data_points(values, n):
         result.append(cluster_sum)
     return result
 
-electricity_demand = pd.read_excel(os.path.join('Data', 'Demand.xlsx'), sheet_name='Electricity Demand')['Demands'].tolist()
+electricity_demand = pd.read_excel(os.path.join('Data', 'Demand.xlsx'), sheet_name='2023 Hourly Electricity Demand')['Consumption (kWh/h)'].tolist()
+electricity_demand2 = [x if x >= 100 else ((lambda lv, rv: (lv + rv) / 2 if lv is not None and rv is not None else x)(next((electricity_demand[j] for j in range(i - 1, -1, -1) if electricity_demand[j] >= 100), None), next((electricity_demand[j] for j in range(i + 1, len(electricity_demand)) if electricity_demand[j] >= 100), None))) for i, x in enumerate(electricity_demand)]
 
 solar_initial = pd.read_excel(os.path.join('Data', 'Solar Power.xlsx'), sheet_name='Initial values')
 solar_advancements = {2: pd.read_excel(os.path.join('Data', 'Solar Power.xlsx'), sheet_name='Advancements2'),
@@ -647,55 +645,52 @@ for numStages in num_Stages_list:
 
             for numMultipliers in num_Multipliers_list:
                 solar = TechnologyTree('solar', 'production', numSubperiods, numSubterms, 
-                    lifetime=[solar_initial.iloc[3, i] for i in range(1, solar_initial.shape[1])], 
+                    lifetime=[solar_initial.iloc[2, i] for i in range(1, solar_initial.shape[1])], 
                     initialCost=[solar_initial.iloc[0, i] for i in range(1, solar_initial.shape[1])], 
-                    initialEfficiency=[solar_initial.iloc[1, i] for i in range(1, solar_initial.shape[1])],
-                    initialEmission=[solar_initial.iloc[2, i] for i in range(1, solar_initial.shape[1])], 
-                    degradation_rate=[solar_initial.iloc[4, i] for i in range(1, solar_initial.shape[1])], 
-                    initialOMcost=[solar_initial.iloc[5, i] for i in range(1, solar_initial.shape[1])], 
-                    OMcostchangebyage=[solar_initial.iloc[6, i] for i in range(1, solar_initial.shape[1])], 
-                    depreciation_rate=[solar_initial.iloc[7, i] for i in range(1, solar_initial.shape[1])], 
-                    initial_salvage_value=[solar_initial.iloc[8, i] for i in range(1, solar_initial.shape[1])],
-                    OMcostchangebyyear=[solar_initial.iloc[10, i] for i in range(1, solar_initial.shape[1])],
-                    spatial_requirement=[solar_initial.iloc[11, i] for i in range(1, solar_initial.shape[1])],
+                    initialEmission=[solar_initial.iloc[1, i] for i in range(1, solar_initial.shape[1])], 
+                    degradation_rate=[solar_initial.iloc[3, i] for i in range(1, solar_initial.shape[1])], 
+                    initialOMcost=[solar_initial.iloc[4, i] for i in range(1, solar_initial.shape[1])], 
+                    OMcostchangebyage=[solar_initial.iloc[5, i] for i in range(1, solar_initial.shape[1])], 
+                    depreciation_rate=[solar_initial.iloc[6, i] for i in range(1, solar_initial.shape[1])], 
+                    initial_salvage_value=[solar_initial.iloc[7, i] for i in range(1, solar_initial.shape[1])],
+                    OMcostchangebyyear=[solar_initial.iloc[9, i] for i in range(1, solar_initial.shape[1])],
+                    spatial_requirement=[solar_initial.iloc[10, i] for i in range(1, solar_initial.shape[1])],
                     periodic_electricity_production = [[max(0, x) for x in sublist[:numSubterms]] for sublist in solar_periodic_production])
                 solar.ConstructByMultipliers(numStages, probabilities=[solar_advancements[numMultipliers][col][0] for col in solar_advancements[numMultipliers].columns if col != "Metrics"], costMultiplier=[solar_advancements[numMultipliers][col][3] for col in solar_advancements[numMultipliers].columns if col != "Metrics"], efficiencyMultiplier=[solar_advancements[numMultipliers][col][4] for col in solar_advancements[numMultipliers].columns if col != "Metrics"], emissionMultiplier=[solar_advancements[numMultipliers][col][5] for col in solar_advancements[numMultipliers].columns if col != "Metrics"])
 
                 wind = TechnologyTree('wind', 'production', numSubperiods, numSubterms, 
-                    lifetime=[wind_initial.iloc[3, i] for i in range(1, wind_initial.shape[1])], 
+                    lifetime=[wind_initial.iloc[2, i] for i in range(1, wind_initial.shape[1])], 
                     initialCost=[wind_initial.iloc[0, i] for i in range(1, wind_initial.shape[1])], 
-                    initialEfficiency=[wind_initial.iloc[1, i] for i in range(1, wind_initial.shape[1])], 
-                    initialEmission=[wind_initial.iloc[2, i] for i in range(1, wind_initial.shape[1])], 
-                    degradation_rate=[wind_initial.iloc[4, i] for i in range(1, wind_initial.shape[1])], 
-                    initialOMcost=[wind_initial.iloc[5, i] for i in range(1, wind_initial.shape[1])], 
-                    OMcostchangebyage=[wind_initial.iloc[6, i] for i in range(1, wind_initial.shape[1])], 
-                    depreciation_rate=[wind_initial.iloc[7, i] for i in range(1, wind_initial.shape[1])], 
-                    initial_salvage_value=[wind_initial.iloc[8, i] for i in range(1, wind_initial.shape[1])],
-                    OMcostchangebyyear=[wind_initial.iloc[10, i] for i in range(1, wind_initial.shape[1])],
-                    spatial_requirement=[wind_initial.iloc[11, i] for i in range(1, wind_initial.shape[1])],
+                    initialEmission=[wind_initial.iloc[1, i] for i in range(1, wind_initial.shape[1])], 
+                    degradation_rate=[wind_initial.iloc[3, i] for i in range(1, wind_initial.shape[1])], 
+                    initialOMcost=[wind_initial.iloc[4, i] for i in range(1, wind_initial.shape[1])], 
+                    OMcostchangebyage=[wind_initial.iloc[5, i] for i in range(1, wind_initial.shape[1])], 
+                    depreciation_rate=[wind_initial.iloc[6, i] for i in range(1, wind_initial.shape[1])], 
+                    initial_salvage_value=[wind_initial.iloc[7, i] for i in range(1, wind_initial.shape[1])],
+                    OMcostchangebyyear=[wind_initial.iloc[9, i] for i in range(1, wind_initial.shape[1])],
+                    spatial_requirement=[wind_initial.iloc[10, i] for i in range(1, wind_initial.shape[1])],
                     periodic_electricity_production = [[max(0, x) for x in sublist[:numSubterms]] for sublist in wind_periodic_production])
                 wind.ConstructByMultipliers(numStages, probabilities=[wind_advancements[1][col][0] for col in wind_advancements[1].columns if col != "Metrics"], costMultiplier=[wind_advancements[1][col][3] for col in wind_advancements[1].columns if col != "Metrics"], efficiencyMultiplier=[wind_advancements[1][col][4] for col in wind_advancements[1].columns if col != "Metrics"], emissionMultiplier=[wind_advancements[1][col][5] for col in wind_advancements[1].columns if col != "Metrics"])
 
                 battery = TechnologyTree('battery', 'storage', numSubperiods, numSubterms, 
-                    lifetime=[battery_initial.iloc[3, i] for i in range(1, battery_initial.shape[1])], 
+                    lifetime=[battery_initial.iloc[2, i] for i in range(1, battery_initial.shape[1])], 
                     initialCost=[battery_initial.iloc[0, i] for i in range(1, battery_initial.shape[1])], 
-                    initialEfficiency=[battery_initial.iloc[1, i] for i in range(1, battery_initial.shape[1])], 
-                    initialEmission=[battery_initial.iloc[2, i] for i in range(1, battery_initial.shape[1])], 
-                    degradation_rate=[battery_initial.iloc[4, i] for i in range(1, battery_initial.shape[1])], 
-                    initialOMcost=[battery_initial.iloc[5, i] for i in range(1, battery_initial.shape[1])], 
-                    OMcostchangebyage=[battery_initial.iloc[6, i] for i in range(1, battery_initial.shape[1])], 
-                    depreciation_rate=[battery_initial.iloc[7, i] for i in range(1, battery_initial.shape[1])], 
-                    initial_salvage_value=[battery_initial.iloc[8, i] for i in range(1, battery_initial.shape[1])],
-                    OMcostchangebyyear=[battery_initial.iloc[10, i] for i in range(1, battery_initial.shape[1])],
-                    spatial_requirement=[battery_initial.iloc[11, i] for i in range(1, battery_initial.shape[1])],
-                    electricity_storage_capacity=[battery_initial.iloc[12, i] for i in range(1, battery_initial.shape[1])])
+                    initialEmission=[battery_initial.iloc[1, i] for i in range(1, battery_initial.shape[1])], 
+                    degradation_rate=[battery_initial.iloc[3, i] for i in range(1, battery_initial.shape[1])], 
+                    initialOMcost=[battery_initial.iloc[4, i] for i in range(1, battery_initial.shape[1])], 
+                    OMcostchangebyage=[battery_initial.iloc[5, i] for i in range(1, battery_initial.shape[1])], 
+                    depreciation_rate=[battery_initial.iloc[6, i] for i in range(1, battery_initial.shape[1])], 
+                    initial_salvage_value=[battery_initial.iloc[7, i] for i in range(1, battery_initial.shape[1])],
+                    OMcostchangebyyear=[battery_initial.iloc[9, i] for i in range(1, battery_initial.shape[1])],
+                    spatial_requirement=[battery_initial.iloc[10, i] for i in range(1, battery_initial.shape[1])],
+                    electricity_storage_capacity=[battery_initial.iloc[11, i] for i in range(1, battery_initial.shape[1])])
                 battery.ConstructByMultipliers(numStages, probabilities=[battery_advancements[numMultipliers][col][0] for col in battery_advancements[numMultipliers].columns if col != "Metrics"], costMultiplier=[battery_advancements[numMultipliers][col][3] for col in battery_advancements[numMultipliers].columns if col != "Metrics"], efficiencyMultiplier=[battery_advancements[numMultipliers][col][4] for col in battery_advancements[numMultipliers].columns if col != "Metrics"], emissionMultiplier=[battery_advancements[numMultipliers][col][5] for col in battery_advancements[numMultipliers].columns if col != "Metrics"])
 
                 scenarioTree = ScenarioTree([solar, wind, battery])
 
-                initial_tech = [[solar_initial.iloc[9, i] for i in range(1, solar_initial.shape[1])],
-                                [wind_initial.iloc[9, i] for i in range(1, wind_initial.shape[1])],
-                                [battery_initial.iloc[9, i] for i in range(1, battery_initial.shape[1])]]
+                initial_tech = [[solar_initial.iloc[8, i] for i in range(1, solar_initial.shape[1])],
+                                [wind_initial.iloc[8, i] for i in range(1, wind_initial.shape[1])],
+                                [battery_initial.iloc[8, i] for i in range(1, battery_initial.shape[1])]]
 
                 key = f's{numStages}_p{numSubperiods}_t{numSubterms}_n{numMultipliers}'
                 results[key] = OptimizationModel(scenarioTree, emission_limits, demand=[electricity_demand[:numSubterms]]*(numStages*numSubperiods + 1), numStages=numStages, numSubperiods=numSubperiods, numMultipliers=numMultipliers, numSubterms=numSubterms, initial_tech=initial_tech, budget=budget, grid_electricity_cost=grid_electricity_cost)
