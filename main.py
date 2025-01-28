@@ -555,7 +555,7 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
         node.AddVariables(model)
         node.AddObjectiveCoefficients(model, grid_electricity_cost, discount_factor)
         node.AddDemandConstraints(model, demand)
-        node.SetMinustoZeroConstraints(model)
+        #node.SetMinustoZeroConstraints(model)
         node.AddBalanceConstraints(model)
         node.AddBatteryCapacityConstraints(model)
         #node.AddSpatialConstraints(model, spatial_limit=100000000)
@@ -572,6 +572,9 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
     model.setParam('MIPGap', 0.001)
     model.setParam('MIPFocus', 1)
     model.setParam('TimeLimit', 86400)
+    model.setParam('Threads', 8)
+    model.setParam('NodefileStart', 0.8)
+    model.setParam('NodefileDir', '.')
     model.setParam('LogFile', os.path.join(results_directory, 'GurobiLog.txt'))
 
     start_time = time.time()
@@ -609,7 +612,7 @@ def clustering_n_consecutive_data_points(values, n):
     return result
 
 electricity_demand = pd.read_excel(os.path.join('Data', 'Demand.xlsx'), sheet_name='2023 Hourly Electricity Demand')['Consumption (kWh/h)'].tolist()
-electricity_demand2 = [x if x >= 100 else ((lambda lv, rv: (lv + rv) / 2 if lv is not None and rv is not None else x)(next((electricity_demand[j] for j in range(i - 1, -1, -1) if electricity_demand[j] >= 100), None), next((electricity_demand[j] for j in range(i + 1, len(electricity_demand)) if electricity_demand[j] >= 100), None))) for i, x in enumerate(electricity_demand)]
+electricity_demand = [x if x >= 100 else ((lambda lv, rv: (lv + rv) / 2 if lv is not None and rv is not None else x)(next((electricity_demand[j] for j in range(i - 1, -1, -1) if electricity_demand[j] >= 100), None), next((electricity_demand[j] for j in range(i + 1, len(electricity_demand)) if electricity_demand[j] >= 100), None))) for i, x in enumerate(electricity_demand)]
 
 solar_initial = pd.read_excel(os.path.join('Data', 'Solar Power.xlsx'), sheet_name='Initial values')
 solar_advancements = {2: pd.read_excel(os.path.join('Data', 'Solar Power.xlsx'), sheet_name='Advancements2'),
