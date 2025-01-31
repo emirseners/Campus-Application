@@ -9,18 +9,19 @@ import os
 
 class ScenarioTree:
     def __init__(self, technologyTrees):
-        self.numStages = technologyTrees[0].nodes[-1].stage
-        self.numSubperiods = technologyTrees[0].nodes[-1].numSubperiods
-        self.numSubterms = technologyTrees[0].numSubterms
+        self.technologies = technologyTrees
+        self.numStages = self.technologies[0].nodes[-1].stage
+        self.numSubperiods = self.technologies[0].nodes[-1].numSubperiods
+        self.numSubterms = self.technologies[0].numSubterms
         self.nodes = []
 
         prerootTechNodeList = []
-        for tech in technologyTrees:
+        for tech in self.technologies:
             prerootTechNodeList.append(tech.nodes[0])
         self.preroot = ScenarioNode(0, None, 1, self, prerootTechNodeList)
 
         rootTechNodeList = []
-        for tech in technologyTrees:
+        for tech in self.technologies:
             rootTechNodeList.append(tech.nodes[1])
         self.root = ScenarioNode(1, self.preroot, 1, self, rootTechNodeList)
         self.preroot.children.append(self.root)
@@ -351,7 +352,6 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
                 if tech.tree.segment == 'production':
                     for p in node.stageSubterms:
                         periodic_electricity = tech.periodic_electricity[v][p-1] * (1 - (tech.degradation_rate[v] * (t_ - t)))
-
                         result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': tech_type, 'Version': v, 't': t, 't_': t_, 'p': p, 'VariableValue': var_value, 'PeriodicElectricityProductionPerUnit': periodic_electricity, 'TotalElectricityProduction': var_value * periodic_electricity}
                         results.append(result)
 
@@ -359,7 +359,7 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
                     node_om_cost += om_cost
 
         for key, var in node.g_Purchase.items():
-            var_value = var.X
+            var_value = var.X * node.probability
             t, p = key
             if var_value > 0:
                 purchase_result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': 'grid', 'Version': '', 't': t, 't_': t, 'p': p, 'VariableValue': var_value, 'PeriodicElectricityProductionPerUnit': 0, 'TotalElectricityProduction': var_value}
@@ -424,7 +424,7 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
         total_electricity_demand = sum(demand[t_])
         production_data = total_production_by_tech[(total_production_by_tech['NodeID'] == node_id) & (total_production_by_tech['t_'] == t_)]
 
-        for tech_type in ['solar', 'wind', 'grid']:
+        for tech_type in [tech_tree.type for tech_tree in scenarioTree.technologies]:
             tech_data = production_data[production_data['TechType'] == tech_type]
             total_electricity_production = tech_data['TotalElectricityProduction'].sum() if not tech_data.empty else 0
 
@@ -432,7 +432,6 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
             summary_entry[f'{tech_type}_ElectricityPercentage'] = (total_electricity_production / total_electricity_demand * 100) if total_electricity_demand > 0 else 0
 
         purchase_data = df_purchase_sale[(df_purchase_sale['NodeID'] == node_id) & (df_purchase_sale['t_'] == t_)]
-
         total_purchase_cost = purchase_data[purchase_data['TotalCost'] > 0]['TotalCost'].sum() if not purchase_data.empty else 0
         summary_entry['Total_PurchaseCost'] = total_purchase_cost
         total_salvage_value = -purchase_data[purchase_data['TotalCost'] < 0]['TotalCost'].sum() if not purchase_data.empty else 0
@@ -448,18 +447,14 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
         summary_data.append(summary_entry)
 
     df_summary = pd.DataFrame(summary_data)
-
     purchase_data = df_purchase_sale[df_purchase_sale['TotalCost'] > 0]
     sale_data = df_purchase_sale[df_purchase_sale['TotalCost'] < 0]
-
     all_tech_types = df_purchase_sale['TechType'].unique().tolist()
     non_grid_techs = [t for t in all_tech_types if t.lower() != 'grid']
-
     purchase_summary = (purchase_data[purchase_data['TechType'].isin(non_grid_techs)].groupby(['NodeID', 'TechType', 'Version'], dropna=False).agg({'VariableValue': 'sum', 'TotalCost': 'sum'}).reset_index())
-    
     purchase_summary.rename(columns={'VariableValue': 'PurchasedQuantity', 'TotalCost': 'PurchaseCost'}, inplace=True)
-    sale_summary = (sale_data[sale_data['TechType'].isin(non_grid_techs)].groupby(['NodeID', 'TechType', 'Version'], dropna=False).agg({'VariableValue': 'sum', 'TotalCost': 'sum'}).reset_index())
     
+    sale_summary = (sale_data[sale_data['TechType'].isin(non_grid_techs)].groupby(['NodeID', 'TechType', 'Version'], dropna=False).agg({'VariableValue': 'sum', 'TotalCost': 'sum'}).reset_index())
     sale_summary['SalvageValue'] = -sale_summary['TotalCost']
     sale_summary.rename(columns={'VariableValue': 'SoldQuantity'}, inplace=True)
     sale_summary = sale_summary[['NodeID', 'TechType', 'Version', 'SoldQuantity', 'SalvageValue']]
@@ -528,24 +523,23 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
 
     cols = cols[:idx] + ['Grid_PurchasedQuantity', 'Grid_PurchaseCost'] + cols[idx:]
     purchase_sale_pivot = purchase_sale_pivot[cols]
-
     purchase_sale_pivot['Total_NodeCost'] += purchase_sale_pivot['Grid_PurchaseCost']
 
     df_results.to_csv(os.path.join(results_directory, f'ProductionResults_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
     df_purchase_sale.to_csv(os.path.join(results_directory, f'PurchaseAndSales_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
-    df_summary.to_csv(os.path.join(results_directory, f'Summary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
     purchase_sale_pivot.to_csv(os.path.join(results_directory, f'PurchaseSaleSummary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
 
-    spatial_usage_list = [{'NodeID': node.id, 'Subperiod': t_, 'SpatialUsage': sum(node.v_Existing[tech.tree.type, v, t, t_].X * tech.spatial_requirement[v] for tech in node.techNodeList for v in range(tech.NumVersion) for t in node.allSubperiods if t <= t_ < t + tech.lifetime[v])} for node in scenarioTree.nodes for t_ in node.stageSubperiods]
-    df_spatial_usage = pd.DataFrame(spatial_usage_list)
-    df_spatial_usage.to_csv(os.path.join(results_directory, f'SpatialUsage_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
+    spatial_usage_list = []
+    for node in scenarioTree.nodes:
+        for t_ in node.stageSubperiods:
+            usage_value = sum(node.v_Existing[tech.tree.type, v, t, t_].X * tech.spatial_requirement[v] for tech in node.techNodeList for v in range(tech.NumVersion) for t in node.allSubperiods if t <= t_ < t + tech.lifetime[v])
+            spatial_usage_list.append({'NodeID': node.id, 't_': t_, 'SpatialUsage': usage_value})
 
-    print("\nSpatial area usage by node and subperiod:")
-    for node_id in df_spatial_usage['NodeID'].unique():
-        usage_info = df_spatial_usage.loc[df_spatial_usage['NodeID'] == node_id]
-        print(f"  Node {node_id}:")
-        for _, row in usage_info.iterrows():
-            print(f"Subperiod {row['Subperiod']}: {row['SpatialUsage']:.3f}")
+    df_spatial_usage = pd.DataFrame(spatial_usage_list)
+
+    df_summary = pd.merge(df_summary, df_spatial_usage, how='left', on=['NodeID', 't_'])
+    df_summary.rename(columns={'SpatialUsage': 'Total_SpatialUsage'}, inplace=True)
+    df_summary.to_csv(os.path.join(results_directory, f'Summary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
 
 def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubperiods, numMultipliers, numSubterms, initial_tech, budget, grid_electricity_cost, discount_factor = 0.99):
     model = Model('MachineReplacement')
@@ -572,10 +566,10 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
     model.setParam('MIPGap', 0.001)
     model.setParam('MIPFocus', 1)
     model.setParam('TimeLimit', 86400)
-    model.setParam('Threads', 8)
-    model.setParam('NodefileStart', 0.8)
+    model.setParam('Threads', 32)
+    model.setParam('NodefileStart', 0.9)
     model.setParam('NodefileDir', '.')
-    model.setParam('LogFile', os.path.join(results_directory, 'GurobiLog.txt'))
+    model.setParam('LogFile', os.path.join(results_directory, f'GurobiLog_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.txt'))
 
     start_time = time.time()
     model.optimize()
@@ -587,7 +581,7 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
     #model.write(lp_filename)
     #model.write(sol_filename)
 
-    #OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers, results_directory, grid_electricity_cost)
+    OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers, results_directory, grid_electricity_cost)
     Output(model)
 
     model_results = {
@@ -630,7 +624,7 @@ battery_advancements = {2: pd.read_excel(os.path.join('Data', 'Battery.xlsx'), s
 num_Stages_list = [3]
 num_Subperiods_list = [5]
 num_Subterms_list = [4380]
-num_Multipliers_list = [2, 3]
+num_Multipliers_list = [2]
 
 results = {}
 
@@ -642,7 +636,7 @@ for numStages in num_Stages_list:
             solar_periodic_production = [clustering_n_consecutive_data_points(version_production, int(8760/numSubterms)) for version_production in solar_periodic_production]
             wind_periodic_production = [clustering_n_consecutive_data_points(version_production, int(8760/numSubterms)) for version_production in wind_periodic_production]
     
-            grid_electricity_cost = [0.132 for _ in range(numStages*numSubperiods+1)]
+            grid_electricity_cost = [0.144 for _ in range(numStages*numSubperiods+1)]
             emission_limits = [None for _ in range(numStages*numSubperiods)] + [0]
             budget = [None for _ in range(numStages*numSubperiods+1)]
 
