@@ -6,6 +6,7 @@ import numpy as np
 import math
 from functools import reduce
 import os
+from collections import defaultdict
 
 class ScenarioTree:
     def __init__(self, technologyTrees):
@@ -336,210 +337,224 @@ def Output(m):
         print('Optimal objective value: ' + str(m.objVal) + "\n")
 
 def OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers, results_directory, grid_electricity_cost):
-    results = []
-    purchase_sale_results = []
-    grid_inventory_results = []
-    node_om_costs = {}
+    grid_purchase_results = []
+    inventory_carrying_results = []
+    installation_results = []
+    salvaging_results = []
+    operating_results = []
 
     for node in scenarioTree.nodes:
-        node_om_cost = 0
-        for key, var in node.v_Existing.items():
-            var_value = var.X
-            if var_value > 0:
-                tech_type, v, t, t_ = key
-                tech = node.FindAncestorFromDiff(t, t_).techNodeList[node.FindAncestorFromDiff(t, t_).tech_types.index(tech_type)]
-
-                if tech.tree.segment == 'production':
-                    for p in node.stageSubterms:
-                        periodic_electricity = tech.periodic_electricity[v][p-1] * (1 - (tech.degradation_rate[v] * (t_ - t)))
-                        result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': tech_type, 'Version': v, 't': t, 't_': t_, 'p': p, 'VariableValue': var_value, 'PeriodicElectricityProductionPerUnit': periodic_electricity, 'TotalElectricityProduction': var_value * periodic_electricity}
-                        results.append(result)
-
-                    om_cost = var_value * node.probability * tech.OMcost[v] * (tech.OMcostchangebyage[v] ** (t_ - t)) * (tech.OMcostchangebyyear[v] ** t) * (discount_factor ** t_)
-                    node_om_cost += om_cost
-
         for key, var in node.g_Purchase.items():
-            var_value = var.X * node.probability
             t, p = key
-            if var_value > 0:
-                purchase_result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': 'grid', 'Version': '', 't': t, 't_': t, 'p': p, 'VariableValue': var_value, 'PeriodicElectricityProductionPerUnit': 0, 'TotalElectricityProduction': var_value}
-                results.append(purchase_result)
-
-            grid_inventory_entry = {'NodeID': node.id, 't': t, 'p': p, 'g_Purchase': var_value}
-            grid_inventory_results.append(grid_inventory_entry)
+            grid_purchase_results.append({'Node': node, 'NodeID': node.id, 't': t, 'p': p, 'value': var.X})
 
         for key, var in node.i_Carrying.items():
-            var_value = var.X
             t, p = key
-            existing_entry = next((entry for entry in grid_inventory_results if entry['NodeID'] == node.id and entry['t'] == t and entry['p'] == p), None)
-            if existing_entry:
-                existing_entry['i_Carrying'] = var_value
-            else:
-                grid_inventory_entry = {'NodeID': node.id, 't': t, 'p': p, 'i_Carrying': var_value}
-                grid_inventory_results.append(grid_inventory_entry)
-
-        node_om_costs[node.id] = node_om_cost
+            inventory_carrying_results.append({'Node': node, 'NodeID': node.id, 't': t, 'p': p, 'value': var.X})
 
         for key, var in node.v_Plus.items():
-            var_value = var.X
-            if var_value > 0:
-                tech_type, v, t_ = key
-                tech = node.techNodeList[node.tech_types.index(tech_type)]
-                purchase_cost_per_unit = node.probability * tech.cost[v] * (discount_factor ** t_)
-                purchase_result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': tech_type, 'Version': v, 't_': t_, 'VariableValue': var_value, 'CostPerUnit': purchase_cost_per_unit, 'TotalCost': var_value * purchase_cost_per_unit}
-                purchase_sale_results.append(purchase_result)
+            tech_type, v, t = key
+            installation_results.append({'Node': node, 'NodeID': node.id, 'tech': node.techNodeList[node.tech_types.index(tech_type)], 'tech_type': tech_type, 'v': v, 't': t, 'value': var.X})
 
         for key, var in node.v_Minus.items():
-            var_value = var.X
-            if var_value > 0:
-                tech_type, v, t, t_ = key
-                tech = node.FindAncestorFromDiff(t, t_).techNodeList[node.FindAncestorFromDiff(t, t_).tech_types.index(tech_type)]
-                salvage_value_per_unit = node.probability * tech.salvage_value[v] * (tech.depreciation_rate[v] * tech.lifetime[v] - (tech.depreciation_rate[v] * (t_ - t))) * (discount_factor ** t_)
-                sale_result = {'NodeID': node.id, 'VariableName': var.VarName, 'TechType': tech_type, 'Version': v, 't': t, 't_': t_, 'VariableValue': var_value, 'CostPerUnit': salvage_value_per_unit, 'TotalCost': var_value * salvage_value_per_unit}
-                purchase_sale_results.append(sale_result)
+            tech_type, v, t, t_ = key
+            salvaging_results.append({'Node': node, 'NodeID': node.id, 'tech': node.FindAncestorFromDiff(t, t_).techNodeList[node.FindAncestorFromDiff(t, t_).tech_types.index(tech_type)], 'tech_type': tech_type, 'v': v, 't': t, 't_': t_, 'value': var.X})
 
-    df_results = pd.DataFrame(results)
-    df_results.drop(columns=[col for col in ['OMCostPerUnit', 'OMCost'] if col in df_results.columns], inplace=True)
-    df_purchase_sale = pd.DataFrame(purchase_sale_results)
-    df_grid_inventory = pd.DataFrame(grid_inventory_results)
-    if 'g_Purchase' not in df_grid_inventory.columns:
-        df_grid_inventory['g_Purchase'] = 0
-    if 'i_Carrying' not in df_grid_inventory.columns:
-        df_grid_inventory['i_Carrying'] = 0
+        for key, var in node.v_Existing.items():
+            tech_type, v, t, t_ = key
+            operating_results.append({'Node': node, 'NodeID': node.id, 'tech': node.FindAncestorFromDiff(t, t_).techNodeList[node.FindAncestorFromDiff(t, t_).tech_types.index(tech_type)], 'tech_type': tech_type, 'v': v, 't': t, 't_': t_, 'value': var.X})
 
-    df_grid_inventory.to_csv(os.path.join(results_directory, f'GridAndInventory_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
-    total_production_by_tech = df_results.groupby(['NodeID', 't_', 'TechType']).agg({'TotalElectricityProduction': 'sum'}).reset_index()
-
-    summary_data = []
-    inventory_sums = df_grid_inventory.groupby(['NodeID', 't']).agg({'i_Carrying': 'sum'}).reset_index()
-    inventory_sums.rename(columns={'i_Carrying': 'TotalInventoryCarrying', 't': 't_'}, inplace=True)
-
-    node_t_combinations = total_production_by_tech[['NodeID', 't_']].drop_duplicates()
-
-    for _, row in node_t_combinations.iterrows():
-        node_id = row['NodeID']
-        t_ = row['t_']
-
-        summary_entry = {'NodeID': node_id, 't_': t_}
-        total_electricity_demand = sum(demand[t_])
-        production_data = total_production_by_tech[(total_production_by_tech['NodeID'] == node_id) & (total_production_by_tech['t_'] == t_)]
-
-        for tech_type in [tech_tree.type for tech_tree in scenarioTree.technologies]:
-            tech_data = production_data[production_data['TechType'] == tech_type]
-            total_electricity_production = tech_data['TotalElectricityProduction'].sum() if not tech_data.empty else 0
-
-            summary_entry[f'{tech_type}_TotalElectricityProduction'] = total_electricity_production
-            summary_entry[f'{tech_type}_ElectricityPercentage'] = (total_electricity_production / total_electricity_demand * 100) if total_electricity_demand > 0 else 0
-
-        purchase_data = df_purchase_sale[(df_purchase_sale['NodeID'] == node_id) & (df_purchase_sale['t_'] == t_)]
-        total_purchase_cost = purchase_data[purchase_data['TotalCost'] > 0]['TotalCost'].sum() if not purchase_data.empty else 0
-        summary_entry['Total_PurchaseCost'] = total_purchase_cost
-        total_salvage_value = -purchase_data[purchase_data['TotalCost'] < 0]['TotalCost'].sum() if not purchase_data.empty else 0
-        summary_entry['Total_SalvageValue'] = total_salvage_value
-
-        inventory_row = inventory_sums[(inventory_sums['NodeID'] == node_id) & (inventory_sums['t_'] == t_)]
-        if not inventory_row.empty:
-            total_inventory_carrying = inventory_row['TotalInventoryCarrying'].values[0]
-        else:
-            total_inventory_carrying = 0
-        summary_entry['TotalInventoryCarrying'] = total_inventory_carrying
-
-        summary_data.append(summary_entry)
-
-    df_summary = pd.DataFrame(summary_data)
-    purchase_data = df_purchase_sale[df_purchase_sale['TotalCost'] > 0]
-    sale_data = df_purchase_sale[df_purchase_sale['TotalCost'] < 0]
-    all_tech_types = df_purchase_sale['TechType'].unique().tolist()
-    non_grid_techs = [t for t in all_tech_types if t.lower() != 'grid']
-    purchase_summary = (purchase_data[purchase_data['TechType'].isin(non_grid_techs)].groupby(['NodeID', 'TechType', 'Version'], dropna=False).agg({'VariableValue': 'sum', 'TotalCost': 'sum'}).reset_index())
-    purchase_summary.rename(columns={'VariableValue': 'PurchasedQuantity', 'TotalCost': 'PurchaseCost'}, inplace=True)
-    
-    sale_summary = (sale_data[sale_data['TechType'].isin(non_grid_techs)].groupby(['NodeID', 'TechType', 'Version'], dropna=False).agg({'VariableValue': 'sum', 'TotalCost': 'sum'}).reset_index())
-    sale_summary['SalvageValue'] = -sale_summary['TotalCost']
-    sale_summary.rename(columns={'VariableValue': 'SoldQuantity'}, inplace=True)
-    sale_summary = sale_summary[['NodeID', 'TechType', 'Version', 'SoldQuantity', 'SalvageValue']]
-
-    purchase_sale_summary = pd.merge(purchase_summary, sale_summary, on=['NodeID', 'TechType', 'Version'], how='outer')
-    purchase_sale_summary.fillna(0, inplace=True)
-
-    df_g_purchase = df_grid_inventory[['NodeID', 't', 'p', 'g_Purchase']]
-    df_g_purchase = df_g_purchase[df_g_purchase['g_Purchase'] > 0]
-
-    if not df_g_purchase.empty:
-        df_g_purchase['t_'] = df_g_purchase['t']
-        df_g_purchase['VariableName'] = 'g_Purchase'
-        df_g_purchase['TechType'] = 'grid'
-        df_g_purchase['Version'] = ''
-        df_g_purchase['VariableValue'] = df_g_purchase['g_Purchase']
-        df_g_purchase['CostPerUnit'] = df_g_purchase['t'].apply(lambda t: grid_electricity_cost[t] * (discount_factor ** t))
-        df_g_purchase['TotalCost'] = df_g_purchase['VariableValue'] * df_g_purchase['CostPerUnit']
-        df_g_purchase_yearly_summed = df_g_purchase.groupby('t_').agg({'NodeID': 'first', 'VariableName': 'first', 'TechType': 'first', 'Version': 'first', 'VariableValue': 'sum', 'CostPerUnit': 'first', 'TotalCost': 'sum'}).reset_index()
-
-        df_g_purchase_yearly_summed['TotalCost'] = df_g_purchase_yearly_summed['VariableValue'] * df_g_purchase_yearly_summed['CostPerUnit']
-        df_grid_purchase = df_g_purchase[['NodeID', 'VariableName', 'TechType', 'Version', 't_', 'VariableValue', 'CostPerUnit', 'TotalCost']].copy()
-        df_purchase_sale = pd.concat([df_purchase_sale, df_g_purchase_yearly_summed], ignore_index=True)
-
-    df_purchase_sale.sort_values(by=['NodeID', 't_'], ascending=[True, True], inplace=True)
-    grid_purchase_node_summary = df_grid_purchase.groupby('NodeID').agg({'VariableValue': 'sum', 'TotalCost': 'sum'}).reset_index()
-    grid_purchase_node_summary.rename(columns={'VariableValue': 'Grid_PurchasedQuantity', 'TotalCost': 'Grid_PurchaseCost'}, inplace=True)
-
-    purchase_sale_summary['Tech_Version'] = purchase_sale_summary['TechType'] + '_V' + purchase_sale_summary['Version'].astype(str)
-
-    purchase_pivot = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='PurchasedQuantity').fillna(0)
-    purchase_pivot.columns = ['Purchased_' + col for col in purchase_pivot.columns]
-    purchase_cost_pivot = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='PurchaseCost').fillna(0)
-    purchase_cost_pivot.columns = ['PurchaseCost_' + col for col in purchase_cost_pivot.columns]
-    sold_pivot = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='SoldQuantity').fillna(0)
-    sold_pivot.columns = ['Sold_' + col for col in sold_pivot.columns]
-    salvage_value_pivot = purchase_sale_summary.pivot(index='NodeID', columns='Tech_Version', values='SalvageValue').fillna(0)
-    salvage_value_pivot.columns = ['SalvageValue_' + col for col in salvage_value_pivot.columns]
-
-    dfs = [purchase_pivot, purchase_cost_pivot, sold_pivot, salvage_value_pivot]
-    purchase_sale_pivot = reduce(lambda left, right: pd.merge(left, right, on='NodeID', how='outer'), dfs)
-    purchase_sale_pivot.fillna(0, inplace=True)
-
-    purchase_sale_pivot = purchase_sale_pivot.loc[:, (purchase_sale_pivot != 0).any(axis=0)]
-
-    total_node_costs = df_summary.groupby('NodeID').agg({'Total_PurchaseCost': 'sum', 'Total_SalvageValue': 'sum'}).reset_index()
-
-    om_costs_df = pd.DataFrame(list(node_om_costs.items()), columns=['NodeID', 'Total_OMCost'])
-    total_node_costs = pd.merge(total_node_costs, om_costs_df, on='NodeID', how='left')
-    total_node_costs['Total_NodeCost'] = total_node_costs['Total_PurchaseCost'] - total_node_costs['Total_SalvageValue'] + total_node_costs['Total_OMCost']
-
-    purchase_sale_pivot = pd.merge(purchase_sale_pivot, total_node_costs, on='NodeID', how='left')
-
-    purchase_sale_pivot = pd.merge(purchase_sale_pivot, grid_purchase_node_summary, on='NodeID', how='left')
-    purchase_sale_pivot[['Grid_PurchasedQuantity', 'Grid_PurchaseCost']] = purchase_sale_pivot[['Grid_PurchasedQuantity', 'Grid_PurchaseCost']].fillna(0)
-
-    cols = purchase_sale_pivot.columns.tolist()
-    if 'Total_PurchaseCost' in cols:
-        idx = cols.index('Total_PurchaseCost')
-    else:
-        idx = len(cols)
-
-    for col in ['Grid_PurchasedQuantity', 'Grid_PurchaseCost']:
-        if col in cols:
-            cols.remove(col)
-
-    cols = cols[:idx] + ['Grid_PurchasedQuantity', 'Grid_PurchaseCost'] + cols[idx:]
-    purchase_sale_pivot = purchase_sale_pivot[cols]
-    purchase_sale_pivot['Total_NodeCost'] += purchase_sale_pivot['Grid_PurchaseCost']
-
-    df_results.to_csv(os.path.join(results_directory, f'ProductionResults_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
-    df_purchase_sale.to_csv(os.path.join(results_directory, f'PurchaseAndSales_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
-    purchase_sale_pivot.to_csv(os.path.join(results_directory, f'PurchaseSaleSummary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
-
-    spatial_usage_list = []
+    purchase_and_sales_results = []
     for node in scenarioTree.nodes:
-        for t_ in node.stageSubperiods:
-            usage_value = sum(node.v_Existing[tech.tree.type, v, t, t_].X * tech.spatial_requirement[v] for tech in node.techNodeList for v in range(tech.NumVersion) for t in node.allSubperiods if t <= t_ < t + tech.lifetime[v])
-            spatial_usage_list.append({'NodeID': node.id, 't_': t_, 'SpatialUsage': usage_value})
+        for each_period in node.stageSubperiods:
+            annual_grid_purchase = sum([each_grid_purchase_result['value'] for each_grid_purchase_result in grid_purchase_results if (each_grid_purchase_result['NodeID'] == node.id and each_grid_purchase_result['t'] == each_period)])
+            if annual_grid_purchase > 0:
+                purchase_and_sales_results.append({'NodeID': node.id, 't': each_period, 'variable': 'grid', 'event': 'purchase', 'quantity': annual_grid_purchase, 'cost_per_unit': grid_electricity_cost[each_period]*(discount_factor**each_period), 'total_cost': annual_grid_purchase*grid_electricity_cost[each_period]*(discount_factor**each_period)})
+            for each_installation_result in installation_results:
+                if (each_installation_result['t'] == each_period and each_installation_result['NodeID'] == node.id and each_installation_result['value'] > 0):
+                    purchase_and_sales_results.append({'NodeID': node.id, 't': each_period, 'variable': each_installation_result['tech_type'] + 'V' + str(each_installation_result['v']), 'event': 'installation', 'quantity': each_installation_result['value'], 'cost_per_unit': each_installation_result['tech'].cost[each_installation_result['v']]*(discount_factor**each_period), 'total_cost': each_installation_result['value']*each_installation_result['tech'].cost[each_installation_result['v']]*(discount_factor**each_period)})
+            for each_salvaging_result in salvaging_results:
+                if (each_salvaging_result['t_'] == each_period and each_salvaging_result['NodeID'] == node.id and each_salvaging_result['value'] > 0):
+                    purchase_and_sales_results.append({'NodeID': node.id, 't': each_salvaging_result['t'], 't_': each_salvaging_result['t_'], 'variable': each_salvaging_result['tech_type'] + 'V' + str(each_salvaging_result['v']), 'event': 'salvaging', 'quantity': each_salvaging_result['value'], 'cost_per_unit': each_salvaging_result['tech'].salvage_value[each_salvaging_result['v']]*(discount_factor**each_period), 'total_cost': each_salvaging_result['value']*each_salvaging_result['tech'].salvage_value[each_salvaging_result['v']]*(discount_factor**each_period)})
 
-    df_spatial_usage = pd.DataFrame(spatial_usage_list)
+    node_summary_installation_dict = defaultdict(float)
+    node_summary_installation_cost_dict = defaultdict(float)
+    node_summary_salvage_dict = defaultdict(float)
+    node_summary_salvage_cost_dict = defaultdict(float)
+    node_summary_grid_purchase_dict = defaultdict(float)
+    node_summary_grid_purchase_cost_dict = defaultdict(float)
+    node_summary_operating_cost_dict = defaultdict(float)
 
-    df_summary = pd.merge(df_summary, df_spatial_usage, how='left', on=['NodeID', 't_'])
-    df_summary.rename(columns={'SpatialUsage': 'Total_SpatialUsage'}, inplace=True)
-    df_summary.to_csv(os.path.join(results_directory, f'Summary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
+    for each_installation_result in installation_results:
+        if each_installation_result['value'] > 0:
+            node_summary_installation_dict[(each_installation_result['NodeID'], each_installation_result['tech_type'], each_installation_result['v'])] += each_installation_result['value']
+            node_summary_installation_cost_dict[(each_installation_result['NodeID'], each_installation_result['tech_type'], each_installation_result['v'])] += each_installation_result['value']*each_installation_result['tech'].cost[each_installation_result['v']]*(discount_factor**each_installation_result['t'])
+
+    for each_salvaging_result in salvaging_results:
+        if each_salvaging_result['value'] > 0:
+            node_summary_salvage_dict[(each_salvaging_result['NodeID'], each_salvaging_result['tech_type'], each_salvaging_result['v'])] += each_salvaging_result['value']
+            node_summary_salvage_cost_dict[(each_salvaging_result['NodeID'], each_salvaging_result['tech_type'], each_salvaging_result['v'])] += each_salvaging_result['value']*each_salvaging_result['tech'].salvage_value[each_salvaging_result['v']]*(each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * each_salvaging_result['tech'].lifetime[each_salvaging_result['v']] - (each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * (each_salvaging_result['t_'] - each_salvaging_result['t'])))*(discount_factor**each_salvaging_result['t_'])
+
+    for each_grid_result in grid_purchase_results:
+        if each_grid_result['value'] > 0:
+            node_summary_grid_purchase_dict[each_grid_result['NodeID']] += each_grid_result['value']
+            node_summary_grid_purchase_cost_dict[each_grid_result['NodeID']] += each_grid_result['value']*grid_electricity_cost[each_grid_result['t']]*(discount_factor**each_grid_result['t'])
+
+    for each_operating_result in operating_results:
+        if each_operating_result['value'] > 0:
+            node_summary_operating_cost_dict[(each_operating_result['NodeID'])] += each_operating_result['value']*each_operating_result['tech'].OMcost[each_operating_result['v']] * ((each_operating_result['tech'].OMcostchangebyage[each_operating_result['v']])**(each_operating_result['t_'] - each_operating_result['t'])) * ((each_operating_result['tech'].OMcostchangebyyear[each_operating_result['v']])**(each_operating_result['t'])) * (discount_factor**each_operating_result['t_'])
+
+    node_summary_results = []
+
+    for (node_id, tech_type, v), total_value in node_summary_installation_dict.items():
+        node_summary_results.append({'NodeID': node_id, f'Installation{tech_type}_V{v}': total_value})
+
+    total_installation_cost = {}
+    for (node_id, tech_type, v), total_value in node_summary_installation_cost_dict.items():
+        node_summary_results.append({'NodeID': node_id, f'InstallationCost{tech_type}_V{v}': total_value})
+        total_installation_cost[node_id] = total_installation_cost.get(node_id, 0) + total_value
+
+    for (node_id, tech_type, v), total_value in node_summary_salvage_dict.items():
+        node_summary_results.append({'NodeID': node_id, f'Salvage{tech_type}_V{v}': total_value})
+
+    total_salvage_cost = {}
+    for (node_id, tech_type, v), total_value in node_summary_salvage_cost_dict.items():
+        node_summary_results.append({'NodeID': node_id, f'SalvageCost{tech_type}_V{v}': total_value})
+        total_salvage_cost[node_id] = total_salvage_cost.get(node_id, 0) + total_value
+
+    for node_id, total_value in node_summary_grid_purchase_dict.items():
+        node_summary_results.append({'NodeID': node_id, 'GridPurchase': total_value})
+
+    for node_id, total_value in node_summary_grid_purchase_cost_dict.items():
+        node_summary_results.append({'NodeID': node_id, 'GridPurchaseCost': total_value})
+
+    for node_id, total_value in node_summary_operating_cost_dict.items():
+        node_summary_results.append({'NodeID': node_id, 'TotalO&MCost': total_value})
+    
+    for node_id, total_value in total_installation_cost.items():
+        node_summary_results.append({'NodeID': node_id, 'TotalInstallationCost': total_value})
+
+    for node_id, total_value in total_salvage_cost.items():
+        node_summary_results.append({'NodeID': node_id, 'TotalSalvageCost': total_value})
+
+    combined_node_summary = {}
+
+    for entry in node_summary_results:
+        node_id = entry['NodeID']
+        if node_id not in combined_node_summary:
+            combined_node_summary[node_id] = {'NodeID': node_id}
+        for key, value in entry.items():
+            if key != 'NodeID':
+                combined_node_summary[node_id][key] = value
+
+    for node_id, summary in combined_node_summary.items():
+        summary['TotalNodeCost'] = summary.get('TotalInstallationCost', 0) + summary.get('GridPurchaseCost', 0) + summary.get('TotalO&MCost', 0) - summary.get('TotalSalvageCost', 0)
+
+    node_summary_list = list(combined_node_summary.values())
+
+    for leaf_node in [node for node in scenarioTree.nodes if not node.children]:
+        path_ids = []
+        current_node = leaf_node
+        while current_node is not None:
+            path_ids.append(current_node.id)
+            current_node = current_node.parent
+
+        for entry in node_summary_list:
+            if entry["NodeID"] == leaf_node.id:
+                entry["PathInstallationCost"] = sum(rec.get("TotalInstallationCost", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)
+                entry["PathO&MCost"] = sum(rec.get("TotalO&MCost", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)
+                entry["PathSalvageCost"] = sum(rec.get("TotalSalvageCost", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)
+                entry["PathGridPurchaseCost"] = sum(rec.get("GridPurchaseCost", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)
+                entry["PathTotalCost"] = sum(rec.get("TotalNodeCost", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)
+                break
+
+    annual_summary_results = []
+    annual_production_results_dict = defaultdict(float)
+    annual_grid_purchase_results_dict = defaultdict(float)
+    annual_grid_cost_results_dict = defaultdict(float)
+    annual_om_cost_results_dict = defaultdict(float)
+    annual_installation_cost_results_dict = defaultdict(float)
+    annual_salvaging_cost_results_dict = defaultdict(float)
+    annual_spatial_usage_results_dict = defaultdict(float)
+    annual_inventory_usage_results_dict = defaultdict(float)
+
+    for each_operating_result in operating_results:
+        if (each_operating_result['value'] > 0 and each_operating_result['tech'].tree.segment == 'production'):
+            annual_production_results_dict[(each_operating_result['NodeID'], each_operating_result['t_'], each_operating_result['tech_type'])] += each_operating_result['value'] * sum([each_operating_result['tech'].periodic_electricity[each_operating_result['v']][p] for p in range(numSubterms)]) * (1 - (each_operating_result['tech'].degradation_rate[each_operating_result['v']] * (each_operating_result['t_'] - each_operating_result['t'])))
+        if each_operating_result['value'] > 0:
+            annual_om_cost_results_dict[(each_operating_result['NodeID'], each_operating_result['t_'])] += each_operating_result['value'] * each_operating_result['tech'].OMcost[each_operating_result['v']] * ((each_operating_result['tech'].OMcostchangebyage[each_operating_result['v']])**(each_operating_result['t_'] - each_operating_result['t'])) * ((each_operating_result['tech'].OMcostchangebyyear[each_operating_result['v']])**(each_operating_result['t'])) * (discount_factor**each_operating_result['t_'])
+            annual_spatial_usage_results_dict[(each_operating_result['NodeID'], each_operating_result['t_'])] += each_operating_result['value'] * each_operating_result['tech'].spatial_requirement[each_operating_result['v']]
+
+    for each_grid_result in grid_purchase_results:
+        if each_grid_result['value'] > 0:
+            annual_grid_purchase_results_dict[(each_grid_result['NodeID'], each_grid_result['t'])] += each_grid_result['value']
+            annual_grid_cost_results_dict[(each_grid_result['NodeID'], each_grid_result['t'])] += each_grid_result['value']*grid_electricity_cost[each_grid_result['t']]*(discount_factor**each_grid_result['t'])
+
+    for each_installation_result in installation_results:
+        if each_installation_result['value'] > 0:
+            annual_installation_cost_results_dict[(each_installation_result['NodeID'], each_installation_result['t'])] += each_installation_result['value']*each_installation_result['tech'].cost[each_installation_result['v']]*(discount_factor**each_installation_result['t'])
+
+    for each_salvaging_result in salvaging_results:
+        if each_salvaging_result['value'] > 0:
+            annual_salvaging_cost_results_dict[(each_salvaging_result['NodeID'], each_salvaging_result['t'])] += each_salvaging_result['value']*each_salvaging_result['tech'].salvage_value[each_salvaging_result['v']]*(each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * each_salvaging_result['tech'].lifetime[each_salvaging_result['v']] - (each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * (each_salvaging_result['t_'] - each_salvaging_result['t'])))*(discount_factor**each_salvaging_result['t_'])
+
+    inventory_dict = {}
+    for result in inventory_carrying_results:
+        if result['value'] > 0:
+            inventory_dict[(result['NodeID'], result['t'], result['p'])] = result['value']
+
+    for (node, t, p), current_value in inventory_dict.items():
+        prev_key = (node, t, p - 1) if p > 0 else (node, t - 1, numSubterms)
+        prev_value = inventory_dict.get(prev_key, 0)
+        annual_inventory_usage_results_dict[(node, t)] = annual_inventory_usage_results_dict.get((node, t), 0) + max(prev_value - current_value, 0)
+
+    for (node_id, t), total_value in annual_inventory_usage_results_dict.items():
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'InventoryUsage': total_value})
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'InventoryPercentage': total_value / sum(demand[t])})
+
+    for (node_id, t_, tech_type), total_value in annual_production_results_dict.items():
+        annual_summary_results.append({'NodeID': node_id, 't_': t_, f'{tech_type}_Production': total_value})
+
+    for (node_id, t_), total_value in annual_spatial_usage_results_dict.items():
+        annual_summary_results.append({'NodeID': node_id, 't_': t_, 'SpatialUsage': total_value})
+
+    for (node_id, t), total_value in annual_grid_purchase_results_dict.items():
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'GridPurchaseQuantity': total_value})
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'GridPercentage': total_value/sum(demand[t])})
+
+    for (node_id, t), total_value in annual_grid_cost_results_dict.items():
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'GridPurchaseCost': total_value})
+
+    for (node_id, t), total_value in annual_installation_cost_results_dict.items():
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'InstallationCost': total_value})
+
+    for (node_id, t), total_value in annual_salvaging_cost_results_dict.items():
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'SalvageCost': total_value})
+
+    for (node_id, t), total_value in annual_om_cost_results_dict.items():
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'O&MCost': total_value})
+
+    combined_annual_summary_results = {}
+    for entry in annual_summary_results:
+        key = (entry["NodeID"], entry["t_"])
+        if key not in combined_annual_summary_results:
+            combined_annual_summary_results[key] = {"NodeID": entry["NodeID"], "t": entry["t_"]}
+        for k, v in entry.items():
+            if k not in ("NodeID", "t_"):
+                combined_annual_summary_results[key][k] = v
+
+    combined_annual_summary_results_list = list(combined_annual_summary_results.values())
+    for entry in combined_annual_summary_results_list:
+        entry["TotalCost"] = entry.get("InstallationCost", 0) + entry.get("GridPurchaseCost", 0) + entry.get("O&MCost", 0) - entry.get("SalvageCost", 0)
+        entry["RenewablePercentage"] = 1 - entry.get("GridPercentage", 0) - entry.get("InventoryPercentage", 0)
+
+    node_summary_df = pd.DataFrame(node_summary_list)
+    annual_summary_df = pd.DataFrame(combined_annual_summary_results_list)
+    purchase_sales_df = pd.DataFrame(purchase_and_sales_results)
+
+    node_summary_df.to_csv(os.path.join(results_directory, f'NodeSummary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
+    annual_summary_df.to_csv(os.path.join(results_directory, f'AnnualSummary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
+    purchase_sales_df.to_csv(os.path.join(results_directory, f'PurchaseAndSales_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
 
 def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubperiods, numMultipliers, numSubterms, initial_tech, budget, grid_electricity_cost, discount_factor = 0.99):
     model = Model('MachineReplacement')
@@ -566,8 +581,8 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
     model.setParam('MIPGap', 0.001)
     model.setParam('MIPFocus', 1)
     model.setParam('TimeLimit', 86400)
-    model.setParam('Threads', 32)
-    model.setParam('NodefileStart', 0.9)
+    model.setParam('Threads', 20)
+    model.setParam('NodefileStart', 0.95)
     model.setParam('NodefileDir', '.')
     model.setParam('LogFile', os.path.join(results_directory, f'GurobiLog_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.txt'))
 
@@ -581,7 +596,7 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
     #model.write(lp_filename)
     #model.write(sol_filename)
 
-    OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers, results_directory, grid_electricity_cost)
+    #OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers, results_directory, grid_electricity_cost)
     Output(model)
 
     model_results = {
@@ -605,17 +620,25 @@ def clustering_n_consecutive_data_points(values, n):
         result.append(cluster_sum)
     return result
 
-electricity_demand = pd.read_excel(os.path.join('Data', 'Demand.xlsx'), sheet_name='2023 Hourly Electricity Demand')['Consumption (kWh/h)'].tolist()
-electricity_demand = [x if x >= 100 else ((lambda lv, rv: (lv + rv) / 2 if lv is not None and rv is not None else x)(next((electricity_demand[j] for j in range(i - 1, -1, -1) if electricity_demand[j] >= 100), None), next((electricity_demand[j] for j in range(i + 1, len(electricity_demand)) if electricity_demand[j] >= 100), None))) for i, x in enumerate(electricity_demand)]
+electricity_demand_2023 = pd.read_excel(os.path.join('Data', 'Demand.xlsx'), sheet_name='2023 Hourly Electricity Demand')['Consumption (kWh/h)'].tolist()
+electricity_demand_2023 = [x if x >= 100 else ((lambda lv, rv: (lv + rv) / 2 if lv is not None and rv is not None else x)(next((electricity_demand_2023[j] for j in range(i - 1, -1, -1) if electricity_demand_2023[j] >= 100), None), next((electricity_demand_2023[j] for j in range(i + 1, len(electricity_demand_2023)) if electricity_demand_2023[j] >= 100), None))) for i, x in enumerate(electricity_demand_2023)]
+
+electricity_demand_2024 = pd.read_excel(os.path.join('Data', 'Demand.xlsx'), sheet_name='2024 Hourly Electricity Demand')['Consumption (kWh/h)'].tolist()
+electricity_demand_2024 = [x if x >= 100 else ((lambda lv, rv: (lv + rv) / 2 if lv is not None and rv is not None else x)(next((electricity_demand_2024[j] for j in range(i - 1, -1, -1) if electricity_demand_2024[j] >= 100), None), next((electricity_demand_2024[j] for j in range(i + 1, len(electricity_demand_2024)) if electricity_demand_2024[j] >= 100), None))) for i, x in enumerate(electricity_demand_2024)]
+
+electricity_demand_2023 = electricity_demand_2023[24:]
+electricity_demand_2024 = electricity_demand_2024[:(8760-24)]
+
+electricity_demand = [(val_2023 + val_2024) / 2 for val_2023, val_2024 in zip(electricity_demand_2023, electricity_demand_2024)]
 
 solar_initial = pd.read_excel(os.path.join('Data', 'Solar Power.xlsx'), sheet_name='Initial values')
 solar_advancements = {2: pd.read_excel(os.path.join('Data', 'Solar Power.xlsx'), sheet_name='Advancements2'),
                       3: pd.read_excel(os.path.join('Data', 'Solar Power.xlsx'), sheet_name='Advancements3')}
-solar_periodic_production = pd.read_excel(os.path.join('Data', 'Production.xlsx'), sheet_name='solar').T.values.tolist()
+solar_periodic_production = pd.read_excel(os.path.join('Data', 'Production.xlsx'), sheet_name='solar').T.values.tolist()[:(8760-24)]
 
 wind_initial = pd.read_excel(os.path.join('Data', 'Wind Power.xlsx'), sheet_name='Initial values')
 wind_advancements = {1: pd.read_excel(os.path.join('Data', 'Wind Power.xlsx'), sheet_name='Advancements1')}
-wind_periodic_production = pd.read_excel(os.path.join('Data', 'Production.xlsx'), sheet_name='wind').T.values.tolist()
+wind_periodic_production = pd.read_excel(os.path.join('Data', 'Production.xlsx'), sheet_name='wind').T.values.tolist()[:(8760-24)]
 
 battery_initial = pd.read_excel(os.path.join('Data', 'Battery.xlsx'), sheet_name='Initial values')
 battery_advancements = {2: pd.read_excel(os.path.join('Data', 'Battery.xlsx'), sheet_name='Advancements2'),
@@ -639,6 +662,7 @@ for numStages in num_Stages_list:
             grid_electricity_cost = [0.144 for _ in range(numStages*numSubperiods+1)]
             emission_limits = [None for _ in range(numStages*numSubperiods)] + [0]
             budget = [None for _ in range(numStages*numSubperiods+1)]
+            #budget = [5000000, 5000000, 5000000, 5000000, 5000000, 5000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000]
 
             for numMultipliers in num_Multipliers_list:
                 solar = TechnologyTree('solar', 'production', numSubperiods, numSubterms, 
