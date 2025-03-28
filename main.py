@@ -210,6 +210,12 @@ class ScenarioNode:
                     else:
                         model.addConstr(quicksum((self.FindAncestorFromDiff(t,t_).productiontechNodeList[i].periodic_electricity[v][p]*self.v_Existing[tech.tree.type,v,t,t_]*(1 - (self.FindAncestorFromDiff(t,t_).productiontechNodeList[i].degradation_rate[v] * (t_ - t)))) for i, tech in enumerate(self.productiontechNodeList) for v in range(self.productiontechNodeList[i].NumVersion) for t in range(0,t_+1) if t <= t_ < t + self.FindAncestorFromDiff(t,t_).productiontechNodeList[i].lifetime[v]) + self.g_Purchase[t_, p+1] + self.i_Carrying[t_, p] - self.i_Carrying[t_, p+1] >= periodic_demand + z_value*sigma, name = f'N{self.id}_ProbDemand_Electricity_{t_}_{p}')
 
+    def AddSafetyStockConstraints(self, model, safety_stock):
+        for t in self.stageSubperiods:
+            if safety_stock[t] != None:
+                for p in self.stageSubterms:
+                    model.addConstr(self.i_Carrying[t,p] >= safety_stock[t], name = f'N{self.id}_SafetyStock_{t}_{p}')
+
     def PrintEmissionConsumption(self, model):
         if len(self.children) == 0:
             print("Total emission_"+str(self.id)+ ": " + str(self.emissionExpr.getValue()))
@@ -388,21 +394,21 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
     for each_installation_result in installation_results:
         if each_installation_result['value'] > 0:
             node_summary_installation_dict[(each_installation_result['NodeID'], each_installation_result['tech_type'], each_installation_result['v'])] += each_installation_result['value']
-            node_summary_installation_cost_dict[(each_installation_result['NodeID'], each_installation_result['tech_type'], each_installation_result['v'])] += each_installation_result['value']*each_installation_result['tech'].cost[each_installation_result['v']]*(discount_factor**each_installation_result['t'])
+            node_summary_installation_cost_dict[(each_installation_result['NodeID'], each_installation_result['tech_type'], each_installation_result['v'])] += 0.000001 * each_installation_result['value']*each_installation_result['tech'].cost[each_installation_result['v']]*(discount_factor**each_installation_result['t'])
 
     for each_salvaging_result in salvaging_results:
         if each_salvaging_result['value'] > 0:
             node_summary_salvage_dict[(each_salvaging_result['NodeID'], each_salvaging_result['tech_type'], each_salvaging_result['v'])] += each_salvaging_result['value']
-            node_summary_salvage_cost_dict[(each_salvaging_result['NodeID'], each_salvaging_result['tech_type'], each_salvaging_result['v'])] += each_salvaging_result['value']*each_salvaging_result['tech'].salvage_value[each_salvaging_result['v']]*(each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * each_salvaging_result['tech'].lifetime[each_salvaging_result['v']] - (each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * (each_salvaging_result['t_'] - each_salvaging_result['t'])))*(discount_factor**each_salvaging_result['t_'])
+            node_summary_salvage_cost_dict[(each_salvaging_result['NodeID'], each_salvaging_result['tech_type'], each_salvaging_result['v'])] += 0.000001 * each_salvaging_result['value']*each_salvaging_result['tech'].salvage_value[each_salvaging_result['v']]*(each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * each_salvaging_result['tech'].lifetime[each_salvaging_result['v']] - (each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * (each_salvaging_result['t_'] - each_salvaging_result['t'])))*(discount_factor**each_salvaging_result['t_'])
 
     for each_grid_result in grid_purchase_results:
         if each_grid_result['value'] > 0:
             node_summary_grid_purchase_dict[each_grid_result['NodeID']] += each_grid_result['value']
-            node_summary_grid_purchase_cost_dict[each_grid_result['NodeID']] += each_grid_result['value']*grid_electricity_cost[each_grid_result['t']]*(discount_factor**each_grid_result['t'])
+            node_summary_grid_purchase_cost_dict[each_grid_result['NodeID']] += 0.000001 * each_grid_result['value']*grid_electricity_cost[each_grid_result['t']]*(discount_factor**each_grid_result['t'])
 
     for each_operating_result in operating_results:
         if each_operating_result['value'] > 0:
-            node_summary_operating_cost_dict[(each_operating_result['NodeID'])] += each_operating_result['value']*each_operating_result['tech'].OMcost[each_operating_result['v']] * ((each_operating_result['tech'].OMcostchangebyage[each_operating_result['v']])**(each_operating_result['t_'] - each_operating_result['t'])) * ((each_operating_result['tech'].OMcostchangebyyear[each_operating_result['v']])**(each_operating_result['t'])) * (discount_factor**each_operating_result['t_'])
+            node_summary_operating_cost_dict[(each_operating_result['NodeID'])] += 0.000001 * each_operating_result['value']*each_operating_result['tech'].OMcost[each_operating_result['v']] * ((each_operating_result['tech'].OMcostchangebyage[each_operating_result['v']])**(each_operating_result['t_'] - each_operating_result['t'])) * ((each_operating_result['tech'].OMcostchangebyyear[each_operating_result['v']])**(each_operating_result['t'])) * (discount_factor**each_operating_result['t_'])
 
     node_summary_results = []
 
@@ -466,6 +472,8 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
                 entry["PathSalvageCost"] = sum(rec.get("TotalSalvageCost", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)
                 entry["PathGridPurchaseCost"] = sum(rec.get("GridPurchaseCost", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)
                 entry["PathTotalCost"] = sum(rec.get("TotalNodeCost", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)
+                entry["PathGridPurchaseQuantity"] = sum(rec.get("GridPurchase", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)                
+                entry["PathBatteryInstallationQuantity"] = sum(rec.get("Installationbattery_V0", 0) for rec in node_summary_list if rec["NodeID"] in path_ids)                
                 break
 
     annual_summary_results = []
@@ -478,25 +486,33 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
     annual_spatial_usage_results_dict = defaultdict(float)
     annual_inventory_usage_results_dict = defaultdict(float)
 
+    operating_dict = {}
     for each_operating_result in operating_results:
         if (each_operating_result['value'] > 0 and each_operating_result['tech'].tree.segment == 'production'):
             annual_production_results_dict[(each_operating_result['NodeID'], each_operating_result['t_'], each_operating_result['tech_type'])] += each_operating_result['value'] * sum([each_operating_result['tech'].periodic_electricity[each_operating_result['v']][p] for p in range(numSubterms)]) * (1 - (each_operating_result['tech'].degradation_rate[each_operating_result['v']] * (each_operating_result['t_'] - each_operating_result['t'])))
+            for p in range(numSubterms):
+                operating_dict[(each_operating_result['NodeID'], each_operating_result['t_'], p)] = operating_dict.get((each_operating_result['NodeID'], each_operating_result['t_'], p), 0) + each_operating_result['value'] * each_operating_result['tech'].periodic_electricity[each_operating_result['v']][p] * (1 - (each_operating_result['tech'].degradation_rate[each_operating_result['v']] * (each_operating_result['t_'] - each_operating_result['t'])))           
+
         if each_operating_result['value'] > 0:
-            annual_om_cost_results_dict[(each_operating_result['NodeID'], each_operating_result['t_'])] += each_operating_result['value'] * each_operating_result['tech'].OMcost[each_operating_result['v']] * ((each_operating_result['tech'].OMcostchangebyage[each_operating_result['v']])**(each_operating_result['t_'] - each_operating_result['t'])) * ((each_operating_result['tech'].OMcostchangebyyear[each_operating_result['v']])**(each_operating_result['t'])) * (discount_factor**each_operating_result['t_'])
+            annual_om_cost_results_dict[(each_operating_result['NodeID'], each_operating_result['t_'])] += 0.000001 * each_operating_result['value'] * each_operating_result['tech'].OMcost[each_operating_result['v']] * ((each_operating_result['tech'].OMcostchangebyage[each_operating_result['v']])**(each_operating_result['t_'] - each_operating_result['t'])) * ((each_operating_result['tech'].OMcostchangebyyear[each_operating_result['v']])**(each_operating_result['t'])) * (discount_factor**each_operating_result['t_'])
             annual_spatial_usage_results_dict[(each_operating_result['NodeID'], each_operating_result['t_'])] += each_operating_result['value'] * each_operating_result['tech'].spatial_requirement[each_operating_result['v']]
+
+    renewable_met_dict = {}
+    for (node_id, t_, p), total_value in operating_dict.items():
+        renewable_met_dict[(node_id, t_)] = renewable_met_dict.get((node_id, t_), 0) + min(demand[t_][p], total_value)
 
     for each_grid_result in grid_purchase_results:
         if each_grid_result['value'] > 0:
             annual_grid_purchase_results_dict[(each_grid_result['NodeID'], each_grid_result['t'])] += each_grid_result['value']
-            annual_grid_cost_results_dict[(each_grid_result['NodeID'], each_grid_result['t'])] += each_grid_result['value']*grid_electricity_cost[each_grid_result['t']]*(discount_factor**each_grid_result['t'])
+            annual_grid_cost_results_dict[(each_grid_result['NodeID'], each_grid_result['t'])] += 0.000001 * each_grid_result['value']*grid_electricity_cost[each_grid_result['t']]*(discount_factor**each_grid_result['t'])
 
     for each_installation_result in installation_results:
         if each_installation_result['value'] > 0:
-            annual_installation_cost_results_dict[(each_installation_result['NodeID'], each_installation_result['t'])] += each_installation_result['value']*each_installation_result['tech'].cost[each_installation_result['v']]*(discount_factor**each_installation_result['t'])
+            annual_installation_cost_results_dict[(each_installation_result['NodeID'], each_installation_result['t'])] += 0.000001 * each_installation_result['value']*each_installation_result['tech'].cost[each_installation_result['v']]*(discount_factor**each_installation_result['t'])
 
     for each_salvaging_result in salvaging_results:
         if each_salvaging_result['value'] > 0:
-            annual_salvaging_cost_results_dict[(each_salvaging_result['NodeID'], each_salvaging_result['t'])] += each_salvaging_result['value']*each_salvaging_result['tech'].salvage_value[each_salvaging_result['v']]*(each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * each_salvaging_result['tech'].lifetime[each_salvaging_result['v']] - (each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * (each_salvaging_result['t_'] - each_salvaging_result['t'])))*(discount_factor**each_salvaging_result['t_'])
+            annual_salvaging_cost_results_dict[(each_salvaging_result['NodeID'], each_salvaging_result['t_'])] += 0.000001 * each_salvaging_result['value']*each_salvaging_result['tech'].salvage_value[each_salvaging_result['v']]*(each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * each_salvaging_result['tech'].lifetime[each_salvaging_result['v']] - (each_salvaging_result['tech'].depreciation_rate[each_salvaging_result['v']] * (each_salvaging_result['t_'] - each_salvaging_result['t'])))*(discount_factor**each_salvaging_result['t_'])
 
     inventory_dict = {}
     for result in inventory_carrying_results:
@@ -510,7 +526,7 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
 
     for (node_id, t), total_value in annual_inventory_usage_results_dict.items():
         annual_summary_results.append({'NodeID': node_id, 't_': t, 'InventoryUsage': total_value})
-        annual_summary_results.append({'NodeID': node_id, 't_': t, 'InventoryPercentage': total_value / sum(demand[t])})
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'InventoryPercentage': 100*total_value / sum(demand[t])})
 
     for (node_id, t_, tech_type), total_value in annual_production_results_dict.items():
         annual_summary_results.append({'NodeID': node_id, 't_': t_, f'{tech_type}_Production': total_value})
@@ -520,7 +536,7 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
 
     for (node_id, t), total_value in annual_grid_purchase_results_dict.items():
         annual_summary_results.append({'NodeID': node_id, 't_': t, 'GridPurchaseQuantity': total_value})
-        annual_summary_results.append({'NodeID': node_id, 't_': t, 'GridPercentage': total_value/sum(demand[t])})
+        annual_summary_results.append({'NodeID': node_id, 't_': t, 'GridPercentage': 100*total_value/sum(demand[t])})
 
     for (node_id, t), total_value in annual_grid_cost_results_dict.items():
         annual_summary_results.append({'NodeID': node_id, 't_': t, 'GridPurchaseCost': total_value})
@@ -546,7 +562,7 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
     combined_annual_summary_results_list = list(combined_annual_summary_results.values())
     for entry in combined_annual_summary_results_list:
         entry["TotalCost"] = entry.get("InstallationCost", 0) + entry.get("GridPurchaseCost", 0) + entry.get("O&MCost", 0) - entry.get("SalvageCost", 0)
-        entry["RenewablePercentage"] = 1 - entry.get("GridPercentage", 0) - entry.get("InventoryPercentage", 0)
+        entry["RenewablePercentage"] = 100 * renewable_met_dict.get((entry["NodeID"], entry["t"]), 0) / sum(demand[entry["t"]]) if sum(demand[entry["t"]]) > 0 else 0
 
     node_summary_df = pd.DataFrame(node_summary_list)
     annual_summary_df = pd.DataFrame(combined_annual_summary_results_list)
@@ -556,7 +572,7 @@ def OutputProductionResults(model, scenarioTree, discount_factor, demand, numSta
     annual_summary_df.to_csv(os.path.join(results_directory, f'AnnualSummary_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
     purchase_sales_df.to_csv(os.path.join(results_directory, f'PurchaseAndSales_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}.csv'), index=False)
 
-def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubperiods, numMultipliers, numSubterms, initial_tech, budget, grid_electricity_cost, discount_factor = 0.99):
+def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubperiods, numMultipliers, numSubterms, initial_tech, budget, grid_electricity_cost, safety_stock, discount_factor = 0.99):
     model = Model('MachineReplacement')
     model.setParam('OutputFlag', True)
 
@@ -573,12 +589,13 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
         node.InitializeCurrentTech(model, initial_tech)
         node.AddUpperBoundsForIP(model, demand)
         #node.AddProbabilisticDemandConstraints(model, demand, 0.99)
+        node.AddSafetyStockConstraints(model, safety_stock)
 
     results_directory = f'Results_{numStages}_{numSubperiods}_{numSubterms}_{numMultipliers}'
     if not os.path.exists(results_directory):
         os.makedirs(results_directory)
 
-    model.setParam('MIPGap', 0.001)
+    model.setParam('MIPGap', 0.00001)
     model.setParam('MIPFocus', 1)
     model.setParam('TimeLimit', 86400)
     model.setParam('Threads', 20)
@@ -596,7 +613,7 @@ def OptimizationModel(scenarioTree, emission_limits, demand, numStages, numSubpe
     #model.write(lp_filename)
     #model.write(sol_filename)
 
-    #OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers, results_directory, grid_electricity_cost)
+    OutputProductionResults(model, scenarioTree, discount_factor, demand, numStages, numSubperiods, numSubterms, numMultipliers, results_directory, grid_electricity_cost)
     Output(model)
 
     model_results = {
@@ -638,7 +655,7 @@ solar_periodic_production = pd.read_excel(os.path.join('Data', 'Production.xlsx'
 
 wind_initial = pd.read_excel(os.path.join('Data', 'Wind Power.xlsx'), sheet_name='Initial values')
 wind_advancements = {1: pd.read_excel(os.path.join('Data', 'Wind Power.xlsx'), sheet_name='Advancements1')}
-wind_periodic_production = pd.read_excel(os.path.join('Data', 'Production.xlsx'), sheet_name='wind').T.values.tolist()[:(8760-24)]
+wind_periodic_production = pd.read_excel(os.path.join('Data', 'Production.xlsx'), sheet_name='wind').T.values.tolist()[:((8760-24))]
 
 battery_initial = pd.read_excel(os.path.join('Data', 'Battery.xlsx'), sheet_name='Initial values')
 battery_advancements = {2: pd.read_excel(os.path.join('Data', 'Battery.xlsx'), sheet_name='Advancements2'),
@@ -646,7 +663,7 @@ battery_advancements = {2: pd.read_excel(os.path.join('Data', 'Battery.xlsx'), s
 
 num_Stages_list = [3]
 num_Subperiods_list = [5]
-num_Subterms_list = [4380]
+num_Subterms_list = [4368]
 num_Multipliers_list = [2]
 
 results = {}
@@ -655,14 +672,15 @@ for numStages in num_Stages_list:
     for numSubperiods in num_Subperiods_list:
         for numSubterms in num_Subterms_list:
 
-            electricity_demand = clustering_n_consecutive_data_points(electricity_demand, int(8760/numSubterms))
-            solar_periodic_production = [clustering_n_consecutive_data_points(version_production, int(8760/numSubterms)) for version_production in solar_periodic_production]
-            wind_periodic_production = [clustering_n_consecutive_data_points(version_production, int(8760/numSubterms)) for version_production in wind_periodic_production]
-    
+            electricity_demand = clustering_n_consecutive_data_points(electricity_demand, int((8760-24)/numSubterms))
+            solar_periodic_production = [clustering_n_consecutive_data_points(version_production, int((8760-24)/numSubterms)) for version_production in solar_periodic_production]
+            wind_periodic_production = [clustering_n_consecutive_data_points(version_production, int((8760-24)/numSubterms)) for version_production in wind_periodic_production]
+
             grid_electricity_cost = [0.144 for _ in range(numStages*numSubperiods+1)]
-            emission_limits = [None for _ in range(numStages*numSubperiods)] + [0]
+            emission_limits = [None for _ in range(numStages*numSubperiods)] + [0]             #[0.02 * sum(electricity_demand)]
+            safety_stock = [None for _ in range(numStages*numSubperiods)] + [500]
             budget = [None for _ in range(numStages*numSubperiods+1)]
-            #budget = [5000000, 5000000, 5000000, 5000000, 5000000, 5000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000]
+            budget = [5000000, 5000000, 5000000, 5000000, 5000000, 5000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000, 10000000]
 
             for numMultipliers in num_Multipliers_list:
                 solar = TechnologyTree('solar', 'production', numSubperiods, numSubterms, 
@@ -714,7 +732,7 @@ for numStages in num_Stages_list:
                                 [battery_initial.iloc[8, i] for i in range(1, battery_initial.shape[1])]]
 
                 key = f's{numStages}_p{numSubperiods}_t{numSubterms}_n{numMultipliers}'
-                results[key] = OptimizationModel(scenarioTree, emission_limits, demand=[electricity_demand[:numSubterms]]*(numStages*numSubperiods + 1), numStages=numStages, numSubperiods=numSubperiods, numMultipliers=numMultipliers, numSubterms=numSubterms, initial_tech=initial_tech, budget=budget, grid_electricity_cost=grid_electricity_cost)
+                results[key] = OptimizationModel(scenarioTree, emission_limits, demand=[electricity_demand[:numSubterms]]*(numStages*numSubperiods + 1), numStages=numStages, numSubperiods=numSubperiods, numMultipliers=numMultipliers, numSubterms=numSubterms, initial_tech=initial_tech, budget=budget, grid_electricity_cost=grid_electricity_cost, safety_stock=safety_stock)
 
                 #df_results = pd.DataFrame.from_dict(results, orient='index')
                 #df_results.reset_index(inplace=True)
